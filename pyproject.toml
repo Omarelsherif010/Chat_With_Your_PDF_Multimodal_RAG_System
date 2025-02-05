@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "chat-with-your-pdf-multimodal-rag-system"
+version = "0.1.0"
+description = ""
+authors = ["Omar Elsherif <omarelsherif010@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+tiktoken = "^0.8.0"
+unstructured = {extras = ["all-docs"], version = "^0.16.17"}
+pillow = "^11.1.0"
+lxml = "^5.3.0"
+chromadb = "^0.6.3"
+langchain = "^0.3.17"
+langchain-community = "^0.3.16"
+langchain-openai = "^0.3.3"
+langchain-groq = "^0.2.4"
+python-dotenv = "^1.0.1"
+python-magic-bin = "^0.4.14"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
