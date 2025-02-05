@@ -103,7 +103,7 @@ def summarize_images(images):
             for image in batch
         ]
         
-        chain = ChatOpenAI(model="gpt-4-vision-preview", max_tokens=500) | StrOutputParser()
+        chain = ChatOpenAI(model="gpt-4o-mini", max_tokens=500) | StrOutputParser()
         return [chain.invoke(msg) for msg in messages]
     
     return process_with_rate_limit(images, process_batch, batch_size=1)
