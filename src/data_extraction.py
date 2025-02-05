@@ -40,6 +40,7 @@ def extract_pdf_elements(file_path):
     texts = []
     images = []
     tables = []
+    processed_images = set()  # Track processed images
     
     for page_num in range(len(doc)):
         page = doc[page_num]
@@ -93,35 +94,63 @@ def extract_pdf_elements(file_path):
             })
         
         # Extract images with captions and save them
-        image_list = page.get_images()
+        # Get both normal images and mask images
+        image_list = page.get_images(full=True)
+        
         for img_index, img in enumerate(image_list):
             xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
             
-            # Find nearby caption
-            caption = find_nearby_caption(texts, page_num + 1, img_index)
-            
-            # Convert to PIL Image
-            image = Image.open(io.BytesIO(image_bytes))
-            
-            # Save image as base64
-            image_filename = f"image_page{page_num + 1}_idx{img_index}.b64"
-            image_path = os.path.join(output_path, image_filename)
-            base64_str = save_image_base64(image, image_path)
-            
-            images.append({
-                'content': base64_str,  # Store base64 string instead of PIL Image
-                'metadata': {
-                    'page': page_num + 1,
-                    'index': img_index,
-                    'size': image.size,
-                    'caption': caption,
-                    'filename': image_filename
-                }
-            })
+            # Skip if we've already processed this image
+            if xref in processed_images:
+                continue
+                
+            try:
+                base_image = doc.extract_image(xref)
+                if base_image:
+                    image_bytes = base_image["image"]
+                    
+                    # Find nearby caption
+                    caption = find_nearby_caption(texts, page_num + 1, img_index)
+                    
+                    # Convert to PIL Image
+                    image = Image.open(io.BytesIO(image_bytes))
+                    
+                    # Skip very small images (likely icons or decorations)
+                    if image.size[0] < 50 or image.size[1] < 50:
+                        continue
+                    
+                    # Save image as base64
+                    image_filename = f"image_page{page_num + 1}_idx{img_index}.b64"
+                    image_path = os.path.join(output_path, image_filename)
+                    base64_str = save_image_base64(image, image_path)
+                    
+                    images.append({
+                        'content': base64_str,
+                        'metadata': {
+                            'page': page_num + 1,
+                            'index': img_index,
+                            'size': image.size,
+                            'caption': caption,
+                            'filename': image_filename
+                        }
+                    })
+                    
+                    processed_images.add(xref)
+                    
+            except Exception as e:
+                print(f"Warning: Could not extract image on page {page_num + 1}, index {img_index}: {str(e)}")
+                continue
     
-    return texts, images, tables
+    # Remove duplicate images based on content
+    unique_images = []
+    seen_contents = set()
+    
+    for img in images:
+        if img['content'] not in seen_contents:
+            seen_contents.add(img['content'])
+            unique_images.append(img)
+    
+    return texts, unique_images, tables
 
 def detect_tables(page):
     """Detect tables using layout analysis"""
@@ -158,6 +187,18 @@ def find_nearby_caption(texts, page_num, img_index):
     
     return nearby_texts[0]['content'] if nearby_texts else None
 
+def display_saved_image(base64_file):
+    """Display an image from a saved base64 file"""
+    with open(base64_file, 'r') as f:
+        base64_str = f.read()
+    
+    # Decode base64 string back to image
+    img_bytes = base64.b64decode(base64_str)
+    img = Image.open(io.BytesIO(img_bytes))
+    
+    # Display image
+    img.show()  # This will open the image in your default image viewer
+
 def main():
     texts, images, tables = extract_pdf_elements(file_path)
     
@@ -180,6 +221,12 @@ def main():
     print("\nImages saved:")
     for img in images:
         print(f"- {img['metadata']['filename']}: {img['metadata']['caption'][:100] if img['metadata']['caption'] else 'No caption'}")
+    
+    print("\nDisplaying saved images:")
+    for img in images:
+        image_path = os.path.join(output_path, img['metadata']['filename'])
+        print(f"Opening: {img['metadata']['filename']}")
+        display_saved_image(image_path)
     
     return texts, images, tables
 
