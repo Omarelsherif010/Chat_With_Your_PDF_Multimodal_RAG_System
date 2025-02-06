@@ -11,20 +11,32 @@ from data_extraction import extract_pdf_elements, display_saved_image
 from data_summarize import summarize_texts, summarize_tables, summarize_images
 from dotenv import load_dotenv
 import json
+from functools import lru_cache
 
 # Load environment variables
 load_dotenv()
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 # Define paths
 persist_directory = "./chroma_db"
 file_path = 'data/attention_paper.pdf'
 output_path = "./pdf_extracted_content/"
 
+
 class MultimodalRetriever:
     def __init__(self):
+        # Load environment variables
+        load_dotenv()
+        
+        # Debug print (remove after testing)
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key and api_key.startswith("sk-"):
+            print(f"API key loaded successfully: {api_key[:10]}...")
+        else:
+            print(f"Warning: API key not found or invalid format: {api_key[:10] if api_key else 'None'}")
+        
         # Initialize embeddings
-        self.embeddings = OpenAIEmbeddings()
+        self.embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
         
         # Initialize stores
         self.text_vectorstore = Chroma(
@@ -48,15 +60,24 @@ class MultimodalRetriever:
         self.table_store = InMemoryStore()
         self.image_store = InMemoryStore()
         
-        # Initialize text splitter
+        # Improve text splitting for better context
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
+            chunk_size=500,  # Smaller chunks for more precise retrieval
+            chunk_overlap=100,
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""]
         )
         
         # Initialize LLM for response generation
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+        self.llm = ChatOpenAI(model="gpt-4o-mini-2024-07-18", temperature=0.7)
         
+        # Add metadata filters for better retrieval
+        self.retrieval_filters = {
+            "text": lambda x: x["type"] == "text",
+            "equation": lambda x: "equation" in x["section_type"].lower(),
+            "technical": lambda x: any(term in x["content"].lower() 
+                                    for term in ["algorithm", "formula", "equation", "implementation"])
+        }
 
     def prepare_text_documents(self, texts, summaries):
         """Prepare text documents with their summaries"""
@@ -150,7 +171,7 @@ class MultimodalRetriever:
         texts, images, tables = extract_pdf_elements(file_path)
         
         # Limit to first 10 texts for development
-        texts = texts[:10]  # Take only first 10 texts
+        texts = texts[:50]  # Take only first 50 texts
         print(f"Using first {len(texts)} text sections for development...")
         
         # Generate summaries
@@ -179,8 +200,9 @@ class MultimodalRetriever:
         
         print("Vector stores initialized successfully!")
         
+    @lru_cache(maxsize=100)
     def retrieve(self, query, k=2):
-        """Retrieve relevant content and handle image display"""
+        """Retrieve relevant content with caching"""
         results = {
             "texts": self.text_vectorstore.similarity_search(query, k=k),
             "tables": self.table_vectorstore.similarity_search(query, k=k),

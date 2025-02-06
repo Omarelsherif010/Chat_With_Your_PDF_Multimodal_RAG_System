@@ -8,11 +8,11 @@ import base64
 from dotenv import load_dotenv
 
 # # Load environment variables from .env file
-# load_dotenv()
+load_dotenv()
 
-# # Set up environment variables for API keys
-# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-# os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
+# Set up environment variables for API keys
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
 # os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY")
 # os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2")
 
@@ -29,6 +29,7 @@ def save_image_base64(image, filename):
     image.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
     
+    # Save raw base64 string without data URI prefix
     with open(filename, 'w') as f:
         f.write(img_str)
     return img_str
@@ -198,6 +199,28 @@ def display_saved_image(base64_file):
     
     # Display image
     img.show()  # This will open the image in your default image viewer
+
+def extract_equations(page):
+    """Extract mathematical equations from the page"""
+    equations = []
+    blocks = page.get_text("dict")["blocks"]
+    
+    for block in blocks:
+        if block["type"] == 0:  # Text block
+            text = " ".join([span["text"] for line in block.get("lines", []) 
+                           for span in line.get("spans", [])])
+            
+            # Look for equation patterns
+            if any(marker in text for marker in ["=", "∑", "∏", "∫", "√"]):
+                equations.append({
+                    'content': text,
+                    'metadata': {
+                        'type': 'equation',
+                        'position': block.get("bbox", [0,0,0,0])
+                    }
+                })
+    
+    return equations
 
 def main():
     texts, images, tables = extract_pdf_elements(file_path)

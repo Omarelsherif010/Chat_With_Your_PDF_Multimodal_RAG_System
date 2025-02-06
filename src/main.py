@@ -12,6 +12,8 @@ from retrieval import MultimodalRetriever
 # Load environment variables
 load_dotenv()
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+
 
 class MultimodalRAG:
     def __init__(self):
@@ -44,12 +46,20 @@ class MultimodalRAG:
         # Process image documents
         for doc in retrieved_docs["images"]:
             if os.path.exists(doc.metadata['filepath']):
-                with open(doc.metadata['filepath'], 'rb') as img_file:
-                    img_content = b64encode(img_file.read()).decode()
+                try:
+                    # Read the base64 content
+                    with open(doc.metadata['filepath'], 'r') as img_file:
+                        base64_content = img_file.read()
+                    
+                    # Add proper data URI prefix for images
+                    img_content = f"data:image/png;base64,{base64_content}"
+                    
                     images.append({
                         "content": img_content,
                         "metadata": doc.metadata
                     })
+                except Exception as e:
+                    print(f"Warning: Could not process image {doc.metadata['filepath']}: {str(e)}")
         
         return {
             "texts": texts,
@@ -62,52 +72,67 @@ class MultimodalRAG:
         context = kwargs["context"]
         question = kwargs["question"]
         
-        # Build context sections
-        text_context = "\n".join([
-            f"Text {i+1}:\n{doc['content']}\nSummary: {doc['metadata']['summary']}"
-            for i, doc in enumerate(context["texts"])
-        ])
-        
-        table_context = "\n".join([
-            f"Table {i+1}:\n{doc['content']}\nSummary: {doc['metadata']['summary']}"
-            for i, doc in enumerate(context["tables"])
-        ])
-        
-        # Construct base prompt
+        # Enhanced prompt structure
         prompt_content = [
-            {
+            SystemMessage(content="""You are an expert AI assistant analyzing research papers. When answering:
+            1. Start with a clear, concise explanation
+            2. Include relevant mathematical formulas when available
+            3. Reference specific sections from the paper
+            4. Explain technical implementation details
+            5. Connect concepts to the visual diagrams when relevant
+            6. Use markdown formatting for better readability"""),
+            HumanMessage(content=[{
                 "type": "text",
-                "text": f"""Answer the question based on the following context from a research paper.
+                "text": f"""Answer the question based on the following context from the research paper.
                 
                 Text Sections:
-                {text_context}
+                {self._format_text_sections(context["texts"])}
+                
+                Technical Details:
+                {self._format_technical_details(context["texts"])}
+                
+                Mathematical Formulas:
+                {self._format_equations(context["texts"])}
                 
                 Tables:
-                {table_context}
+                {self._format_tables(context["tables"])}
                 
-                Question: {question}
-                
-                Provide a detailed answer using the provided context. Reference specific sections when relevant.
-                """
-            }
+                Question: {question}"""
+            }])
         ]
         
-        # Add images to prompt if present
-        for i, img in enumerate(context["images"]):
-            prompt_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{img['content']}"
-                }
-            })
-            prompt_content.append({
-                "type": "text",
-                "text": f"Image {i+1} Caption: {img['metadata']['caption']}\nSummary: {img['metadata']['summary']}"
-            })
+        # Add images with better context
+        if context["images"]:
+            for i, img in enumerate(context["images"]):
+                prompt_content[-1].content.extend([
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": img["content"]}
+                    },
+                    {
+                        "type": "text",
+                        "text": f"""
+                        Figure {i+1}:
+                        Caption: {img['metadata']['caption']}
+                        Summary: {img['metadata']['summary']}
+                        Key Elements to Notice:
+                        - Mathematical relationships shown
+                        - Architecture components
+                        - Data flow and transformations
+                        """
+                    }
+                ])
         
-        return ChatPromptTemplate.from_messages([
-            SystemMessage(content="You are a helpful AI assistant analyzing a research paper."),
-            HumanMessage(content=prompt_content)
+        return prompt_content
+    
+    def _format_text_sections(self, texts):
+        """Format text sections with better structure"""
+        return "\n\n".join([
+            f"Section {i+1} (Page {doc['metadata']['page']}):\n"
+            f"Type: {doc['metadata']['section_type']}\n"
+            f"Content: {doc['content']}\n"
+            f"Summary: {doc['metadata']['summary']}"
+            for i, doc in enumerate(texts)
         ])
     
     def create_chain(self):
@@ -119,7 +144,7 @@ class MultimodalRAG:
                 "question": RunnablePassthrough()
             }
             | RunnableLambda(self.build_prompt)
-            | ChatOpenAI(model="gpt-4o-mini", max_tokens=1000)
+            | ChatOpenAI(model="gpt-4o-mini-2024-07-18", max_tokens=1000)
             | StrOutputParser()
         )
         
@@ -130,7 +155,7 @@ class MultimodalRAG:
         } | RunnablePassthrough().assign(
             response=(
                 RunnableLambda(self.build_prompt)
-                | ChatOpenAI(model="gpt-4o-mini", max_tokens=1000)
+                | ChatOpenAI(model="gpt-4o-mini-2024-07-18", max_tokens=1000)
                 | StrOutputParser()
             )
         )
@@ -145,6 +170,17 @@ class MultimodalRAG:
             }
         else:
             return self.chain.invoke(question)
+
+    def evaluate_response(self, response, context):
+        """Evaluate response quality"""
+        metrics = {
+            "completeness": self._check_completeness(response, context),
+            "technical_depth": self._check_technical_depth(response),
+            "visual_reference": self._check_visual_references(response, context),
+            "mathematical_clarity": self._check_mathematical_clarity(response),
+            "source_citation": self._check_source_citations(response, context)
+        }
+        return metrics
 
 def main():
     # Initialize RAG system
