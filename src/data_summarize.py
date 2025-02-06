@@ -103,7 +103,7 @@ def summarize_images(images):
             for image in batch
         ]
         
-        chain = ChatOpenAI(model="gpt-4o-mini", max_tokens=500) | StrOutputParser()
+        chain = ChatOpenAI(model="gpt-4o-mini-2024-07-18", max_tokens=500) | StrOutputParser()
         return [chain.invoke(msg) for msg in messages]
     
     return process_with_rate_limit(images, process_batch, batch_size=1)
@@ -113,22 +113,22 @@ def main():
     texts, images, tables = extract_pdf_elements(file_path)
 
     # Summarize texts, tables, and images
-    # print("\nProcessing Text Summaries...")
-    # text_summaries = summarize_texts(texts)
-    # print("\nProcessing Table Summaries...")
-    # table_summaries = summarize_tables(tables)
+    print("\nProcessing Text Summaries...")
+    text_summaries = summarize_texts(texts)
+    print("\nProcessing Table Summaries...")
+    table_summaries = summarize_tables(tables)
     
     print("\nProcessing Image Summaries...")
     image_summaries = summarize_images([img['content'] for img in images])
 
     # Print summaries
-    # print("\nText Summaries:")
-    # for summary in text_summaries:
-    #     print(summary)
+    print("\nText Summaries:")
+    for summary in text_summaries:
+        print(summary)
 
-    # print("\nTable Summaries:")
-    # for summary in table_summaries:
-    #     print(summary)
+    print("\nTable Summaries:")
+    for summary in table_summaries:
+        print(summary)
 
     print("\nImage Summaries:")
     for i, summary in enumerate(image_summaries):
