@@ -12,6 +12,8 @@ from data_summarize import summarize_texts, summarize_tables, summarize_images
 from dotenv import load_dotenv
 import json
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import time
 
 # Load environment variables
 load_dotenv()
@@ -78,6 +80,20 @@ class MultimodalRetriever:
             "technical": lambda x: any(term in x["content"].lower() 
                                     for term in ["algorithm", "formula", "equation", "implementation"])
         }
+
+        # Add cleanup method
+        def cleanup(self):
+            """Clean up resources"""
+            try:
+                self.text_vectorstore.delete_collection()
+                self.table_vectorstore.delete_collection()
+                self.image_vectorstore.delete_collection()
+            except Exception as e:
+                print(f"Error during cleanup: {str(e)}")
+                
+        # Register cleanup on exit
+        import atexit
+        atexit.register(self.cleanup)
 
     def prepare_text_documents(self, texts, summaries):
         """Prepare text documents with their summaries"""
@@ -164,42 +180,74 @@ class MultimodalRetriever:
         
         return documents, doc_ids, images
     
+    def add_documents_with_timeout(self, vectorstore, docs, timeout=300):
+        """Add documents to vectorstore with timeout"""
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(vectorstore.add_documents, docs)
+            try:
+                future.result(timeout=timeout)  # 5 minutes timeout
+                return True
+            except TimeoutError:
+                print(f"Operation timed out after {timeout} seconds")
+                return False
+
     def initialize_vectorstores(self):
         """Initialize vector stores with content and summaries"""
-        # Extract content
-        print("Extracting PDF elements...")
-        texts, images, tables = extract_pdf_elements(file_path)
-        
-        # Limit to first 10 texts for development
-        texts = texts[:50]  # Take only first 50 texts
-        print(f"Using first {len(texts)} text sections for development...")
-        
-        # Generate summaries
-        print("Generating summaries...")
-        text_summaries = summarize_texts(texts)
-        table_summaries = summarize_tables(tables)
-        image_summaries = summarize_images([img['content'] for img in images])
-        
-        # Prepare documents
-        text_docs, text_ids, text_originals = self.prepare_text_documents(texts, text_summaries)
-        table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
-        image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
-        
-        print(f"Processing {len(texts)} texts, {len(tables)} tables, {len(images)} images...")
-        
-        # Add documents to vector stores
-        print("Adding documents to vector stores...")
-        self.text_vectorstore.add_documents(text_docs)
-        self.table_vectorstore.add_documents(table_docs)
-        self.image_vectorstore.add_documents(image_docs)
-        
-        # Store original documents
-        self.text_store.mset(list(zip(text_ids, text_originals)))
-        self.table_store.mset(list(zip(table_ids, table_originals)))
-        self.image_store.mset(list(zip(image_ids, image_originals)))
-        
-        print("Vector stores initialized successfully!")
-        
+        try:
+            # Add persistence checks and cleanup
+            if os.path.exists(persist_directory):
+                print("Found existing vector stores. Clearing...")
+                for collection in ["text_store", "table_store", "image_store"]:
+                    try:
+                        store = Chroma(collection_name=collection, 
+                                     embedding_function=self.embeddings,
+                                     persist_directory=persist_directory)
+                        store.delete_collection()
+                    except Exception as e:
+                        print(f"Error clearing {collection}: {str(e)}")
+            
+            # Extract content
+            print("Extracting PDF elements...")
+            texts, images, tables = extract_pdf_elements(file_path)
+            
+            # Limit data for testing
+            texts = texts[:20]  # Process only first 20 texts for testing
+            print(f"Using first {len(texts)} text sections for testing...")
+            
+            print("Generating summaries...")
+            text_summaries = summarize_texts(texts)
+            table_summaries = summarize_tables(tables)
+            image_summaries = summarize_images([img['content'] for img in images])
+            
+            # Prepare documents
+            print("Preparing documents...")
+            text_docs, text_ids, text_originals = self.prepare_text_documents(texts, text_summaries)
+            table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
+            image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
+            
+            print(f"Processing {len(texts)} texts, {len(tables)} tables, {len(images)} images...")
+            
+            # Add documents to vector stores with progress updates
+            print("Adding documents to vector stores...")
+            if not self.add_documents_with_timeout(self.text_vectorstore, text_docs):
+                raise Exception("Failed to add documents to text vector store")
+            if not self.add_documents_with_timeout(self.table_vectorstore, table_docs):
+                raise Exception("Failed to add documents to table vector store")
+            if not self.add_documents_with_timeout(self.image_vectorstore, image_docs):
+                raise Exception("Failed to add documents to image vector store")
+            
+            # Store original documents
+            print("Storing original documents...")
+            self.text_store.mset(list(zip(text_ids, text_originals)))
+            self.table_store.mset(list(zip(table_ids, table_originals)))
+            self.image_store.mset(list(zip(image_ids, image_originals)))
+            
+            print("Vector stores initialized successfully!")
+            return True
+        except Exception as e:
+            print(f"Error during initialization: {str(e)}")
+            return False
+    
     @lru_cache(maxsize=100)
     def retrieve(self, query, k=2):
         """Retrieve relevant content with caching"""
@@ -276,6 +324,15 @@ class MultimodalRetriever:
         })
         
         return response
+
+    def analyze_image_elements(self, image_doc):
+        """Detailed analysis of image components"""
+        return {
+            "type": image_doc.metadata.get("type", "unknown"),
+            "components": self._extract_image_components(image_doc),
+            "relationships": self._analyze_relationships(image_doc),
+            "key_points": self._identify_key_points(image_doc)
+        }
 
 def main():
     # Initialize retriever

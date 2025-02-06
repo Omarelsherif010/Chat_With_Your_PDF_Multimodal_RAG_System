@@ -6,6 +6,7 @@ import io
 import re
 import base64
 from dotenv import load_dotenv
+import gc
 
 # # Load environment variables from .env file
 load_dotenv()
@@ -35,123 +36,29 @@ def save_image_base64(image, filename):
     return img_str
 
 def extract_pdf_elements(file_path):
-    # Initialize PDF document
+    # Add batch processing for large documents
+    BATCH_SIZE = 5  # Process 5 pages at a time
+    
     doc = fitz.open(file_path)
+    total_pages = len(doc)
     
-    texts = []
-    images = []
-    tables = []
-    processed_images = set()  # Track processed images
+    all_texts = []
+    all_images = []
+    all_tables = []
     
-    for page_num in range(len(doc)):
-        page = doc[page_num]
+    for start_page in range(0, total_pages, BATCH_SIZE):
+        end_page = min(start_page + BATCH_SIZE, total_pages)
+        # Process pages in batches
+        batch_texts, batch_images, batch_tables = process_page_batch(doc, start_page, end_page)
         
-        # Extract text with more structure
-        blocks = page.get_text("dict")["blocks"]
-        for block in blocks:
-            # Check if it's a text block and has the expected structure
-            if block["type"] == 0 and "lines" in block:  # Text block
-                text_spans = []
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        if "text" in span:
-                            text_spans.append(span["text"])
-                
-                text_content = " ".join(text_spans).strip()
-                if text_content:
-                    # Get font properties from first span if available
-                    first_span = block["lines"][0]["spans"][0] if block["lines"] and block["lines"][0]["spans"] else None
-                    font_size = first_span["size"] if first_span and "size" in first_span else 0
-                    is_bold = first_span["flags"] & 2 ** 4 if first_span and "flags" in first_span else False
-                    y_position = block["bbox"][1] if "bbox" in block else 0
-                    
-                    text_type = "paragraph"
-                    if font_size > 12 and is_bold:
-                        text_type = "heading"
-                    elif y_position < 100 and page_num == 0:
-                        text_type = "title"
-                    elif text_content.lower().startswith(("table", "figure")):
-                        text_type = "caption"
-                    
-                    texts.append({
-                        'content': text_content,
-                        'metadata': {
-                            'page': page_num + 1,
-                            'type': text_type,
-                            'font_size': font_size,
-                            'position': block.get("bbox", [0,0,0,0])
-                        }
-                    })
+        all_texts.extend(batch_texts)
+        all_images.extend(batch_images)
+        all_tables.extend(batch_tables)
         
-        # Improved table detection
-        tables_on_page = detect_tables(page)
-        for table in tables_on_page:
-            tables.append({
-                'content': table,
-                'metadata': {
-                    'page': page_num + 1,
-                    'position': table['bbox'] if 'bbox' in table else None
-                }
-            })
-        
-        # Extract images with captions and save them
-        # Get both normal images and mask images
-        image_list = page.get_images(full=True)
-        
-        for img_index, img in enumerate(image_list):
-            xref = img[0]
-            
-            # Skip if we've already processed this image
-            if xref in processed_images:
-                continue
-                
-            try:
-                base_image = doc.extract_image(xref)
-                if base_image:
-                    image_bytes = base_image["image"]
-                    
-                    # Find nearby caption
-                    caption = find_nearby_caption(texts, page_num + 1, img_index)
-                    
-                    # Convert to PIL Image
-                    image = Image.open(io.BytesIO(image_bytes))
-                    
-                    # Skip very small images (likely icons or decorations)
-                    if image.size[0] < 50 or image.size[1] < 50:
-                        continue
-                    
-                    # Save image as base64
-                    image_filename = f"image_page{page_num + 1}_idx{img_index}.b64"
-                    image_path = os.path.join(output_path, image_filename)
-                    base64_str = save_image_base64(image, image_path)
-                    
-                    images.append({
-                        'content': base64_str,
-                        'metadata': {
-                            'page': page_num + 1,
-                            'index': img_index,
-                            'size': image.size,
-                            'caption': caption,
-                            'filename': image_filename
-                        }
-                    })
-                    
-                    processed_images.add(xref)
-                    
-            except Exception as e:
-                print(f"Warning: Could not extract image on page {page_num + 1}, index {img_index}: {str(e)}")
-                continue
+        # Force garbage collection after each batch
+        gc.collect()
     
-    # Remove duplicate images based on content
-    unique_images = []
-    seen_contents = set()
-    
-    for img in images:
-        if img['content'] not in seen_contents:
-            seen_contents.add(img['content'])
-            unique_images.append(img)
-    
-    return texts, unique_images, tables
+    return all_texts, all_images, all_tables
 
 def detect_tables(page):
     """Detect tables using layout analysis"""

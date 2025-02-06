@@ -46,18 +46,28 @@ model = ChatGroq(
 summarize_chain = {"element": lambda x: x} | prompt | model | StrOutputParser()
 
 def process_with_rate_limit(items, process_fn, batch_size=5, delay=2):
-    """Process items in batches with rate limiting"""
+    """Process items in batches with better error recovery"""
     results = []
+    retry_queue = []
+    max_retries = 3
+    
     for i in tqdm(range(0, len(items), batch_size)):
         batch = items[i:i + batch_size]
         try:
             batch_results = process_fn(batch)
             results.extend(batch_results)
-            if i + batch_size < len(items):  # Don't sleep after the last batch
-                time.sleep(delay)
+            
+            # Process any items in retry queue
+            if retry_queue:
+                retry_results = retry_items(retry_queue, process_fn, max_retries)
+                results.extend(retry_results)
+                retry_queue.clear()
+                
         except Exception as e:
             print(f"Error processing batch: {str(e)}")
-            time.sleep(delay * 2)  # Wait longer on error
+            retry_queue.extend(batch)
+            time.sleep(delay * 2)
+    
     return results
 
 def summarize_texts(texts):
