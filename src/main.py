@@ -233,33 +233,41 @@ class MultimodalRAG:
         return metrics
 
 def main():
-    # Initialize RAG system
-    rag = MultimodalRAG()
-    print("Initializing RAG system...")
-    rag.initialize()
-    
-    # Interactive query loop
-    print("\nSystem ready for queries!")
-    while True:
-        query = input("\nEnter your question (or 'quit' to exit): ")
-        if query.lower() == 'quit':
-            break
+    try:
+        # Initialize RAG system
+        rag = MultimodalRAG()
+        print("Initializing RAG system...")
+        rag.initialize()
         
-        show_sources = input("Show sources? (y/n): ").lower() == 'y'
-        
-        print("\nGenerating response...")
-        result = rag.query(query, return_sources=show_sources)
-        
-        if show_sources:
-            print("\nResponse:")
-            print(result["response"])
-            print("\nSources used:")
-            print(json.dumps(result["sources"], indent=2))
-        else:
-            print("\nResponse:")
-            print(result)
-        
-        print("-" * 80)
+        # Interactive query loop
+        print("\nSystem ready for queries!")
+        while True:
+            query = input("\nEnter your question (or 'quit' to exit): ")
+            if query.lower() == 'quit':
+                break
+            
+            show_sources = input("Show sources? (y/n): ").lower() == 'y'
+            
+            print("\nGenerating response...")
+            result = rag.query(query, return_sources=show_sources)
+            
+            if show_sources:
+                print("\nResponse:")
+                print(result["response"])
+                print("\nSources used:")
+                for source_type, sources in result["sources"].items():
+                    print(f"\n{source_type.title()}:")
+                    for source in sources:
+                        print(f"- Page {source.metadata['page']}")
+                        print(f"  Summary: {source.metadata.get('summary', 'No summary')[:200]}...")
+            else:
+                print("\nResponse:")
+                print(result)
+            
+            print("-" * 80)
+            
+    except Exception as e:
+        print(f"Error in main: {e}")
 
 if __name__ == "__main__":
     main()

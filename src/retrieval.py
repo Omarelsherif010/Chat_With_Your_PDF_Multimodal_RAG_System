@@ -8,7 +8,7 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from data_extraction import extract_pdf_elements, display_saved_image
+from data_extraction import extract_pdf_elements, display_saved_image, PDFParser
 from data_summarize import summarize_texts, summarize_tables, summarize_images
 from dotenv import load_dotenv
 import json
@@ -88,169 +88,105 @@ class MultimodalRetriever:
                                     for term in ["algorithm", "formula", "equation", "implementation"])
         }
 
+    def initialize_vectorstores(self):
+        """Initialize vector stores with content"""
+        try:
+            # Initialize parser and extract content
+            parser = PDFParser()
+            print("Extracting PDF elements...")
+            result = parser.extract_elements(file_path)
+            
+            # Generate summaries
+            print("Generating summaries...")
+            text_summaries = summarize_texts(result['texts'])
+            table_summaries = summarize_tables(result['tables'])
+            image_summaries = summarize_images(result['images'])
+            
+            # Prepare documents for vector store
+            print("Preparing documents...")
+            text_docs = self.prepare_text_documents(result['texts'], text_summaries)
+            table_docs = self.prepare_table_documents(result['tables'], table_summaries)
+            image_docs = self.prepare_image_documents(result['images'], image_summaries)
+            
+            # Add to vector store
+            print("Adding to vector store...")
+            self.add_to_vectorstore(text_docs, table_docs, image_docs)
+            
+            print("Vector stores initialized successfully!")
+            return True
+            
+        except Exception as e:
+            print(f"Error initializing vector stores: {e}")
+            return False
+
     def prepare_text_documents(self, texts, summaries):
-        """Prepare text documents for vector store"""
+        """Prepare text documents with summaries"""
         docs = []
-        ids = []
-        originals = []
-        
         for text, summary in zip(texts, summaries):
             try:
-                # Generate unique ID
                 doc_id = str(uuid.uuid4())
-                
-                # Convert position coordinates to list of strings and handle bbox
-                position = text['metadata'].get('position', [0,0,0,0])
-                if isinstance(position, (list, tuple)):
-                    position = [str(round(float(coord), 2)) for coord in position]  # Round floats
-                else:
-                    position = ['0', '0', '0', '0']
-                
-                # Create document with complete metadata
                 doc = Document(
                     page_content=text['content'],
                     metadata={
                         'id': doc_id,
-                        'type': text['metadata'].get('type', 'text'),
-                        'page': int(text['metadata'].get('page', 0)),  # Ensure integer
-                        'summary': summary,
-                        'font_size': float(text['metadata'].get('font_size', 0)),  # Ensure float
-                        'position': position  # List of string coordinates
+                        'type': text['metadata']['type'],
+                        'page': text['metadata']['page'],
+                        'font_info': text['metadata']['font_info'],
+                        'summary': summary
                     }
                 )
-                
                 docs.append(doc)
-                ids.append(doc_id)
-                originals.append({
-                    'content': text['content'],
-                    'metadata': text['metadata']
-                })
-                
             except Exception as e:
-                print(f"Error preparing text document: {str(e)}")
-                continue
-        
-        return docs, ids, originals
-    
+                print(f"Error preparing text document: {e}")
+        return docs
+
     def prepare_table_documents(self, tables, summaries):
-        """Prepare table documents for vector store"""
+        """Prepare table documents with summaries"""
         docs = []
-        ids = []
-        originals = []
-        
-        for i, (table, summary) in enumerate(zip(tables, summaries)):
+        for table, summary in zip(tables, summaries):
             try:
-                # Generate unique ID
                 doc_id = str(uuid.uuid4())
-                
-                # Convert bbox to list of strings
-                bbox = table.get('bbox', [0,0,0,0])
-                if isinstance(bbox, (list, tuple)):
-                    bbox = [str(round(float(coord), 2)) for coord in bbox]
-                else:
-                    bbox = ['0', '0', '0', '0']
-                
-                # Create document
+                content = table.get('html', '') or str(table.get('data', ''))
                 doc = Document(
-                    page_content=table.get('text', ''),
+                    page_content=content,
                     metadata={
                         'id': doc_id,
                         'type': 'table',
-                        'page': int(table['metadata'].get('page', 0)),
-                        'caption': table['metadata'].get('caption', 'No caption'),
-                        'summary': summary,
-                        'rows': int(table['metadata'].get('rows', 0)),
-                        'columns': int(table['metadata'].get('columns', 0)),
-                        'bbox': bbox
+                        'page': table['metadata']['page'],
+                        'caption': table['metadata'].get('caption', ''),
+                        'summary': summary
                     }
                 )
-                
                 docs.append(doc)
-                ids.append(doc_id)
-                originals.append({
-                    'content': table.get('content', []),
-                    'metadata': table['metadata']
-                })
-                
             except Exception as e:
-                print(f"Error preparing table document: {str(e)}")
-                continue
-        
-        return docs, ids, originals
-    
+                print(f"Error preparing table document: {e}")
+        return docs
+
     def prepare_image_documents(self, images, summaries):
-        """Prepare image documents for vector store"""
+        """Prepare image documents with summaries"""
         docs = []
-        ids = []
-        originals = []
-        
         for image, summary in zip(images, summaries):
             try:
-                # Generate unique ID
                 doc_id = str(uuid.uuid4())
-                
-                # Save image path
-                image_path = os.path.join(output_path, image['metadata']['filename'])
-                
-                # Create document
                 doc = Document(
-                    page_content=summary,  # Use summary as content for embedding
+                    page_content=summary,  # Use summary as content
                     metadata={
                         'id': doc_id,
                         'type': 'image',
                         'page': image['metadata']['page'],
-                        'caption': image['metadata'].get('caption', 'No caption'),
-                        'summary': summary,
-                        'filepath': image_path
+                        'caption': image['metadata'].get('caption', ''),
+                        'filepath': image['filepath'],
+                        'summary': summary
                     }
                 )
-                
                 docs.append(doc)
-                ids.append(doc_id)
-                originals.append({
-                    'content': image['content'],
-                    'metadata': image['metadata']
-                })
-                
             except Exception as e:
-                print(f"Error preparing image document: {str(e)}")
-                continue
-        
-        return docs, ids, originals
-    
-    def initialize_vectorstores(self):
-        """Initialize vector stores with content and summaries"""
+                print(f"Error preparing image document: {e}")
+        return docs
+
+    def add_to_vectorstore(self, text_docs, table_docs, image_docs):
+        """Add documents to vector store"""
         try:
-            # Extract content
-            print("Extracting PDF elements...")
-            texts, images, tables = extract_pdf_elements(file_path)
-            
-            # Verify we have content
-            if not any([texts, images, tables]):
-                raise ValueError("No content extracted from PDF")
-            
-            print(f"Found {len(texts)} texts, {len(images)} images, {len(tables)} tables")
-            
-            # Generate summaries with progress tracking
-            print("Generating summaries...")
-            text_summaries = summarize_texts(texts) if texts else []
-            table_summaries = summarize_tables(tables) if tables else []
-            image_summaries = summarize_images([img['content'] for img in images]) if images else []
-            
-            # Verify summaries
-            if not any([text_summaries, table_summaries, image_summaries]):
-                raise ValueError("Failed to generate summaries")
-            
-            # Prepare documents
-            print("Preparing documents...")
-            text_docs, text_ids, text_originals = self.prepare_text_documents(texts, text_summaries)
-            table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
-            image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
-            
-            # Verify documents
-            if not any([text_docs, table_docs, image_docs]):
-                raise ValueError("No documents prepared for vector store")
-            
             # Clear existing vectors
             print("Clearing existing vectors...")
             for namespace in ["text", "table", "image"]:
@@ -276,18 +212,15 @@ class MultimodalRetriever:
             
             # Store originals
             print("Storing original documents...")
-            if text_originals:
-                self.text_store.mset(list(zip(text_ids, text_originals)))
-            if table_originals:
-                self.table_store.mset(list(zip(table_ids, table_originals)))
-            if image_originals:
-                self.image_store.mset(list(zip(image_ids, image_originals)))
-            
-            print("Vector stores initialized successfully!")
-            return True
+            if text_docs:
+                self.text_store.mset(list(zip(text_docs, text_docs)))
+            if table_docs:
+                self.table_store.mset(list(zip(table_docs, table_docs)))
+            if image_docs:
+                self.image_store.mset(list(zip(image_docs, image_docs)))
             
         except Exception as e:
-            print(f"Error in initialize_vectorstores: {str(e)}")
+            print(f"Error adding to vector store: {str(e)}")
             raise
     
     @lru_cache(maxsize=100)

@@ -34,45 +34,35 @@ class PDFParser:
         self.output_dir.mkdir(exist_ok=True)
         self.cache_dir.mkdir(exist_ok=True)
 
-        # Define parsing instructions for research papers
+        # Update parsing instructions to focus more on tables
         self.parsing_instruction = """
-        Research Paper Parsing Instructions:
+        Table Extraction Instructions:
 
-        Extract the following elements:
-        1. Text Content:
-           - Title, Abstract, Section headers
-           - Main body text
-           - Figure and table captions
-           - References
+        1. Tables:
+           - Extract all tables with their complete content
+           - Preserve table structure and formatting
+           - Include table headers and column names
+           - Capture table captions and footnotes
+           - Maintain cell alignments and spans
+           - Extract numerical data with proper formatting
+           - Preserve any in-table formatting (bold, italic, etc.)
 
-        2. Tables:
-           - Full table content
-           - Table headers
-           - Table captions
-           - Table footnotes
+        2. Table Context:
+           - Identify table references in the text
+           - Extract table titles and numbering
+           - Capture table descriptions from surrounding text
+           - Note any dependencies between tables
 
-        3. Images/Figures:
-           - Figure content
-           - Figure captions
-           - Equations (as images)
-           - Diagrams and charts
-
-        4. Metadata:
-           - Page numbers
-           - Section types
-           - Font information
-           - Layout structure
-
-        Maintain relationships between:
-        - Figures and their captions
-        - Tables and their captions
-        - References in text to figures/tables
-        - Section hierarchy
+        3. Additional Elements:
+           - Extract text content and section headers
+           - Capture figures and their captions
+           - Maintain document structure
 
         Output Format:
-        - Text: Structured with headers and paragraphs
-        - Tables: HTML format with headers
-        - Images: High-quality extraction with captions
+        - Tables: Structured HTML format with preserved formatting
+        - Table metadata: Include page numbers, captions, and reference information
+        - Text: Maintain paragraph structure
+        - Images: Extract with captions
         """
 
     def get_file_hash(self, file_path):
@@ -111,77 +101,18 @@ class PDFParser:
         except Exception as e:
             print(f"Error saving cache: {e}")
 
-    def extract_elements(self, file_path):
-        """Extract elements from PDF using LlamaParse"""
-        try:
-            # Check cache first
-            cached_result = self.load_cache(file_path)
-            if cached_result:
-                print("Using cached parse result")
-                return cached_result
-
-            print("Processing PDF elements...")
-            # Process and structure the results
-            result = {
-                'texts': [],
-                'images': [],
-                'tables': []
-            }
-
-            # Get raw document from the wrapper function
-            raw_doc = self.get_raw_document(file_path)
-            if not raw_doc:
-                return self._fallback_extraction(file_path)
-
-            for element in tqdm(raw_doc.elements, desc="Processing elements"):
-                try:
-                    if element.type == "text":
-                        result['texts'].append({
-                            'content': element.text,
-                            'metadata': {
-                                'page': element.metadata.page_number,
-                                'type': self._determine_text_type(element),
-                                'font_info': self._extract_font_info(element)
-                            }
-                        })
-                    elif element.type == "table":
-                        result['tables'].append({
-                            'content': element.table.data,
-                            'html': element.table.html,
-                            'metadata': {
-                                'page': element.metadata.page_number,
-                                'caption': self._find_caption(element, "table"),
-                                'headers': element.table.header if hasattr(element.table, 'header') else None
-                            }
-                        })
-                    elif element.type == "image":
-                        image_data = self._process_image(element)
-                        if image_data:
-                            result['images'].append(image_data)
-                except Exception as e:
-                    print(f"Error processing element: {e}")
-                    continue
-
-            # Save to cache
-            self.save_cache(file_path, result)
-            
-            return result
-
-        except Exception as e:
-            print(f"Error extracting PDF elements: {e}")
-            return self._fallback_extraction(file_path)
-
     def get_raw_document(self, file_path):
-        """Get raw document from LlamaParse"""
+        """Get raw document from LlamaParse with enhanced table settings"""
         try:
             parser = LlamaParse(
                 api_key=self.api_key,
                 result_type="markdown",
                 verbose=True,
                 language="en",
-                output_tables_as_HTML=True,
+                output_tables_as_HTML=True,  # Ensure HTML table output
+                enable_table_detection=True,  # Explicitly enable table detection
+                table_detection_mode="high_quality",  # Use high quality table detection
                 ocr_languages=['eng'],
-                enable_table_detection=True,
                 max_retries=3,
                 parsing_instruction=self.parsing_instruction
             )
@@ -189,6 +120,244 @@ class PDFParser:
         except Exception as e:
             print(f"Error getting raw document: {e}")
             return None
+
+    def _process_table(self, element):
+        """Enhanced table processing"""
+        try:
+            if not hasattr(element, 'table') or not element.table:
+                return None
+
+            # Extract table HTML and data
+            table_data = {
+                'html': element.table.html if hasattr(element.table, 'html') else None,
+                'data': element.table.data if hasattr(element.table, 'data') else None,
+                'metadata': {
+                    'page': element.metadata.page_number,
+                    'caption': self._find_caption(element, "table"),
+                    'headers': element.table.header if hasattr(element.table, 'header') else None,
+                    'rows': len(element.table.data) if hasattr(element.table, 'data') else 0,
+                    'columns': len(element.table.data[0]) if hasattr(element.table, 'data') and element.table.data else 0,
+                    'bbox': getattr(element.metadata, 'bbox', None)
+                }
+            }
+
+            # Validate table data
+            if not table_data['data'] and not table_data['html']:
+                return None
+
+            return table_data
+
+        except Exception as e:
+            print(f"Error processing table: {e}")
+            return None
+
+    def _fallback_table_extraction(self, page):
+        """Extract tables using PyMuPDF fallback"""
+        tables = []
+        try:
+            # Find tables on page
+            tab = page.find_tables()
+            if not tab.tables:
+                return []
+                
+            for idx, table in enumerate(tab.tables):
+                try:
+                    # Extract table data
+                    data = []
+                    for row in table.extract():
+                        data.append([str(cell).strip() for cell in row])
+                    
+                    # Find potential caption
+                    caption = self._find_table_caption(page, table.bbox)
+                    
+                    # Create table entry
+                    table_data = {
+                        'data': data,
+                        'html': self._convert_to_html_table(data),
+                        'metadata': {
+                            'page': page.number + 1,
+                            'caption': caption,
+                            'headers': data[0] if data else [],
+                            'rows': len(data),
+                            'columns': len(data[0]) if data else 0,
+                            'bbox': list(table.bbox)
+                        }
+                    }
+                    tables.append(table_data)
+                    
+                except Exception as e:
+                    print(f"Error extracting table {idx}: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"Error in fallback table extraction: {e}")
+        
+        return tables
+
+    def _convert_to_html_table(self, data):
+        """Convert table data to HTML format"""
+        if not data:
+            return ""
+        
+        html = ["<table border='1'>"]
+        
+        # Add header row
+        html.append("<thead><tr>")
+        for header in data[0]:
+            html.append(f"<th>{header}</th>")
+        html.append("</tr></thead>")
+        
+        # Add data rows
+        html.append("<tbody>")
+        for row in data[1:]:
+            html.append("<tr>")
+            for cell in row:
+                html.append(f"<td>{cell}</td>")
+            html.append("</tr>")
+        html.append("</tbody>")
+        
+        html.append("</table>")
+        return "\n".join(html)
+
+    def _find_table_caption(self, page, table_bbox):
+        """Find table caption near the table"""
+        try:
+            # Get text blocks near the table
+            blocks = page.get_text("dict")["blocks"]
+            table_y = table_bbox[1]  # Top of table
+            
+            # Look for captions above and below table
+            potential_captions = []
+            for block in blocks:
+                if block["type"] == 0:  # Text block
+                    text = " ".join(span["text"] for line in block["lines"] 
+                                  for span in line["spans"]).strip()
+                    
+                    if text.lower().startswith(("table", "tab.")):
+                        # Calculate distance to table
+                        block_y = block["bbox"][1]
+                        distance = abs(block_y - table_y)
+                        potential_captions.append((text, distance))
+            
+            # Return closest caption if found
+            if potential_captions:
+                potential_captions.sort(key=lambda x: x[1])
+                return potential_captions[0][0]
+                
+        except Exception as e:
+            print(f"Error finding table caption: {e}")
+        
+        return "No caption found"
+
+    def _extract_tables_from_page(self, page, doc):
+        """Extract tables from a single page using both methods"""
+        tables = []
+        
+        # Try LlamaParse first
+        try:
+            llama_tables = [elem for elem in doc.elements 
+                          if elem.metadata.page_number == page.number + 1 
+                          and elem.type == "table"]
+            
+            for table_elem in llama_tables:
+                table_data = self._process_table(table_elem)
+                if table_data:
+                    tables.append(table_data)
+                    
+        except Exception as e:
+            print(f"Error in LlamaParse table extraction: {e}")
+        
+        # If no tables found, try PyMuPDF
+        if not tables:
+            tables.extend(self._fallback_table_extraction(page))
+        
+        return tables
+
+    def extract_elements(self, file_path):
+        """Extract elements from PDF using LlamaParse with fallback to PyMuPDF"""
+        try:
+            # Check cache first
+            cached_result = self.load_cache(file_path)
+            if cached_result:
+                print("Using cached parse result")
+                self._print_extraction_results(cached_result)
+                return cached_result
+
+            print("Processing PDF elements...")
+            result = {
+                'texts': [],
+                'images': [],
+                'tables': []
+            }
+
+            # Try LlamaParse first
+            raw_doc = self.get_raw_document(file_path)
+            
+            # Open with PyMuPDF for fallback and additional extraction
+            doc = fitz.open(file_path)
+            
+            # Process each page
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                
+                # Extract tables (using both methods)
+                page_tables = self._extract_tables_from_page(page, raw_doc if raw_doc else None)
+                result['tables'].extend(page_tables)
+                
+                # Extract other elements...
+                # (rest of existing extraction code)
+
+            # Save to cache
+            self.save_cache(file_path, result)
+            
+            # Print extraction results
+            self._print_extraction_results(result)
+            
+            return result
+
+        except Exception as e:
+            print(f"Error extracting PDF elements: {e}")
+            return self._fallback_extraction(file_path)
+
+    def _print_extraction_results(self, result):
+        """Print the extraction results in a formatted way"""
+        print("\n=== LlamaParse Extraction Results ===\n")
+        
+        # Print text statistics
+        print("Text Elements:")
+        text_types = {}
+        for text in result['texts']:
+            text_type = text['metadata']['type']
+            text_types[text_type] = text_types.get(text_type, 0) + 1
+        for text_type, count in text_types.items():
+            print(f"  - {text_type.title()}: {count}")
+        
+        # Print table information
+        print("\nTables:")
+        if result['tables']:
+            for i, table in enumerate(result['tables'], 1):
+                page = table['metadata'].get('page', 'Unknown')
+                caption = table['metadata'].get('caption', 'No caption')
+                rows = len(table['data']) if table.get('data') else 0
+                cols = len(table['data'][0]) if table.get('data') and table['data'] else 0
+                print(f"  {i}. Table on page {page}")
+                print(f"     Rows: {rows}, Columns: {cols}")
+                print(f"     Caption: {caption[:100]}{'...' if len(caption) > 100 else ''}")
+        else:
+            print("  No tables found")
+        
+        # Print image information
+        print("\nImages:")
+        if result['images']:
+            for i, image in enumerate(result['images'], 1):
+                page = image['metadata'].get('page', 'Unknown')
+                caption = image['metadata'].get('caption', 'No caption')
+                print(f"  {i}. Image on page {page}")
+                print(f"     Caption: {caption[:100]}{'...' if len(caption) > 100 else ''}")
+        else:
+            print("  No images found")
+        
+        print("\n=====================================\n")
 
     def _determine_text_type(self, element):
         """Determine type of text element"""
@@ -263,100 +432,227 @@ class PDFParser:
     def _fallback_extraction(self, file_path):
         """Fallback PDF extraction using PyMuPDF"""
         print("Using fallback PDF extraction...")
-        doc = fitz.open(file_path)
-        texts = []
-        images = []
-        tables = []
-        
-        # Track image positions for caption matching
-        image_positions = []
-        
-        # First pass: extract text and track potential captions
-        captions = []
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            blocks = page.get_text("dict")["blocks"]
+        try:
+            doc = fitz.open(file_path)
+            result = {
+                'texts': [],
+                'images': [],
+                'tables': []
+            }
             
-            for block in blocks:
-                if block["type"] == 0:  # Text block
-                    text = " ".join(span["text"] for line in block.get("lines", []) 
-                                  for span in line.get("spans", []))
-                    
-                    # Track potential captions
-                    if text.lower().startswith(('figure', 'fig.', 'table')):
-                        captions.append({
-                            'text': text,
-                            'bbox': block["bbox"],
-                            'page': page_num
-                        })
-                    
-                    # Add text block
-                    if text.strip():
-                        texts.append({
-                            'content': text,
-                            'metadata': {
-                                'page': page_num + 1,
-                                'type': determine_block_type(block),
-                                'font_size': get_block_font_size(block),
-                                'position': block["bbox"],
-                                'is_bold': is_block_bold(block)
-                            }
-                        })
-        
-        # Second pass: extract and process images
-        for page_num in range(len(doc)):
-            page = doc[page_num]
+            # Track image positions for caption matching
+            captions = []
             
-            # Extract images with better quality
-            image_list = page.get_images(full=True)
-            for img_index, img in enumerate(image_list):
-                try:
-                    xref = img[0]
-                    base_image = doc.extract_image(xref)
-                    if base_image:
-                        image_data = base_image["image"]
-                        image = Image.open(io.BytesIO(image_data))
+            # First pass: extract text and track potential captions
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                blocks = page.get_text("dict")["blocks"]
+                
+                for block in blocks:
+                    if block["type"] == 0:  # Text block
+                        text = " ".join(span["text"] for line in block.get("lines", []) 
+                                      for span in line.get("spans", []))
                         
-                        # Skip small or low-quality images
-                        if not is_valid_image(image):
+                        # Track potential captions
+                        if text.lower().startswith(('figure', 'fig.', 'table')):
+                            captions.append({
+                                'text': text,
+                                'bbox': block["bbox"],
+                                'page': page_num
+                            })
+                        
+                        # Add text block
+                        if text.strip():
+                            result['texts'].append({
+                                'content': text,
+                                'metadata': {
+                                    'page': page_num + 1,
+                                    'type': self._determine_fallback_text_type(block),
+                                    'font_info': self._extract_fallback_font_info(block)
+                                }
+                            })
+            
+            # Second pass: extract images using improved PyMuPDF method
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                
+                # Get list of images on the page
+                images = page.get_images(full=True)
+                
+                # Process each image
+                for img_index, img in enumerate(images):
+                    try:
+                        xref = img[0]  # xref number
+                        
+                        # Basic image info
+                        base_image = doc.extract_image(xref)
+                        if not base_image:
                             continue
+                            
+                        # Get image properties
+                        pix = fitz.Pixmap(doc, xref)
+                        
+                        # Skip small, low-quality, or mask images
+                        if self._should_skip_image(pix):
+                            pix = None
+                            continue
+                            
+                        # Convert pixmap if necessary
+                        if pix.n >= 4:  # CMYK or RGBA
+                            pix = fitz.Pixmap(fitz.csRGB, pix)
+                        
+                        # Generate unique filename
+                        filename = f"image_page{page_num + 1}_idx{img_index}.png"
+                        filepath = self.output_dir / filename
+                        
+                        # Save image
+                        pix.save(filepath)
+                        pix = None  # Free memory
+                        
+                        # Get image rectangle on page
+                        image_rect = page.get_image_bbox(xref)
                         
                         # Find nearest caption
-                        caption = find_nearest_caption(
+                        caption = self._find_nearest_caption(
                             page_num,
-                            page.get_image_bbox(xref),
+                            image_rect,
                             captions
                         )
                         
-                        image_filename = f"image_page{page_num + 1}_idx{img_index}.b64"
-                        image_path = os.path.join(output_path, image_filename)
+                        # Add to results
+                        result['images'].append({
+                            'filepath': str(filepath),
+                            'metadata': {
+                                'page': page_num + 1,
+                                'caption': caption,
+                                'size': (base_image['width'], base_image['height']),
+                                'format': base_image['ext'],
+                                'colorspace': base_image['colorspace'],
+                                'bbox': image_rect
+                            }
+                        })
                         
-                        # Process and save image
-                        img_processed = process_image(image)
-                        if img_processed:
-                            with open(image_path, 'wb') as f:
-                                f.write(base64.b64encode(img_processed))
-                            
-                            images.append({
-                                'content': base64.b64encode(img_processed).decode(),
-                                'metadata': {
-                                    'page': page_num + 1,
-                                    'index': img_index,
-                                    'size': image.size,
-                                    'caption': caption,
-                                    'filename': image_filename,
-                                    'filepath': image_path,
-                                    'format': image.format or 'unknown',
-                                    'dpi': base_image.get("dpi", (72,72))
-                                }
-                            })
-                            
-                except Exception as img_error:
-                    print(f"Error extracting image: {str(img_error)}")
-                    continue
+                    except Exception as img_error:
+                        print(f"Error extracting image on page {page_num + 1}: {str(img_error)}")
+                        continue
+            
+            print(f"Fallback extraction found: {len(result['texts'])} texts, {len(result['images'])} images")
+            return result
+            
+        except Exception as e:
+            print(f"Error in fallback extraction: {e}")
+            return {'texts': [], 'images': [], 'tables': []}
+
+    def _should_skip_image(self, pix):
+        """Determine if an image should be skipped based on quality criteria"""
+        try:
+            # Skip if too small
+            if pix.width < 50 or pix.height < 50:
+                return True
+                
+            # Skip if it's a mask
+            if pix.n == 1 and pix.is_alpha:
+                return True
+                
+            # Skip if image appears to be a solid color or nearly empty
+            if pix.n in (1, 3):  # Grayscale or RGB
+                # Sample pixels to check for variation
+                samples = []
+                for x in range(0, pix.width, max(1, pix.width // 10)):
+                    for y in range(0, pix.height, max(1, pix.height // 10)):
+                        samples.append(pix.pixel(x, y))
+                
+                # If almost all pixels are the same, skip
+                unique_samples = set(samples)
+                if len(unique_samples) < 3:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error checking image quality: {e}")
+            return True
+
+    def _find_nearest_caption(self, page_num, image_bbox, captions):
+        """Find nearest caption to an image using improved distance calculation"""
+        nearest_caption = None
+        min_distance = float('inf')
         
-        print(f"Fallback extraction found: {len(texts)} texts, {len(images)} images")
-        return texts, images, tables
+        # Convert bbox to rectangle for easier calculations
+        img_rect = fitz.Rect(image_bbox)
+        
+        for caption in captions:
+            if abs(caption['page'] - page_num) <= 1:  # Check same page and adjacent pages
+                cap_rect = fitz.Rect(caption['bbox'])
+                
+                # Calculate distance between rectangles
+                distance = self._rect_distance(img_rect, cap_rect)
+                
+                # Prefer captions below images
+                if cap_rect.y0 >= img_rect.y1:  # Caption is below image
+                    distance *= 0.8  # Give preference to captions below images
+                
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_caption = caption['text']
+        
+        return nearest_caption or f'Image on page {page_num + 1}'
+
+    def _rect_distance(self, rect1, rect2):
+        """Calculate distance between two rectangles"""
+        # If rectangles intersect, distance is 0
+        if rect1.intersects(rect2):
+            return 0
+            
+        # Calculate closest points
+        x1 = max(rect1.x0, min(rect2.x0, rect1.x1))
+        y1 = max(rect1.y0, min(rect2.y0, rect1.y1))
+        x2 = max(rect2.x0, min(x1, rect2.x1))
+        y2 = max(rect2.y0, min(y1, rect2.y1))
+        
+        # Return Euclidean distance
+        return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+    def _determine_fallback_text_type(self, block):
+        """Determine text type from PyMuPDF block"""
+        try:
+            # Get first span's properties
+            span = block["lines"][0]["spans"][0]
+            font_size = span.get("size", 0)
+            flags = span.get("flags", 0)
+            text = span.get("text", "").strip().lower()
+            
+            # Check for title
+            if font_size > 14:
+                return "title"
+            # Check for heading
+            elif font_size > 12 or (flags & 16):  # 16 is bold flag
+                return "heading"
+            # Check for caption
+            elif text.startswith(("figure", "fig.", "table")):
+                return "caption"
+            else:
+                return "paragraph"
+        except:
+            return "paragraph"
+
+    def _extract_fallback_font_info(self, block):
+        """Extract font info from PyMuPDF block"""
+        try:
+            span = block["lines"][0]["spans"][0]
+            return {
+                'size': span.get("size", None),
+                'name': span.get("font", None),
+                'is_bold': bool(span.get("flags", 0) & 16),
+                'is_italic': bool(span.get("flags", 0) & 1)
+            }
+        except:
+            return {
+                'size': None,
+                'name': None,
+                'is_bold': False,
+                'is_italic': False
+            }
 
     def save_as_markdown(self, result, file_path):
         """Save parsed results as markdown file"""
@@ -387,7 +683,7 @@ class PDFParser:
             markdown_content.append("## Text Content\n\n")
             if result['texts']:
                 for text in result['texts']:
-                    text_type = text['metadata'].get('type', 'text')
+                    text_type = text['metadata']['type']
                     page = text['metadata'].get('page', 'Unknown')
                     
                     # Format based on text type
@@ -417,7 +713,7 @@ class PDFParser:
                         markdown_content.append(table['html'])
                     else:
                         markdown_content.append("```\n")
-                        markdown_content.append(format_table(table['content']))
+                        markdown_content.append(format_table(table['data']))
                         markdown_content.append("\n```\n")
                     markdown_content.append("\n\n")
             else:
@@ -681,8 +977,8 @@ def format_table(table):
     # Calculate column widths
     col_widths = []
     for col in range(len(table[0])):
-        col_data = [str(row[col]) for row in table]
-        col_widths.append(max(len(str(x)) for x in col_data))
+        col_data = [str(x) for x in table[col]]
+        col_widths.append(max(len(str(x)) for x in col_data)
     
     # Format the table
     lines = []
@@ -845,24 +1141,19 @@ def display_saved_image(base64_file):
         return None
 
 def main():
-    texts, images, tables = extract_pdf_elements(file_path)
+    parser = PDFParser()
+    pdf_file = "data/attention_paper.pdf"
     
-    print(f"Extracted {len(texts)} text sections, {len(images)} images, and {len(tables)} tables")
+    print(f"Processing PDF: {pdf_file}")
+    result = parser.extract_elements(pdf_file)
     
-    # Print sample information
-    if texts:
-        print("\nSample text:")
-        print(texts[0]['content'][:200])
-    
-    if tables:
-        print("\nSample table:")
-        print(tables[0]['text'])
-    
-    if images:
-        print("\nSample image metadata:")
-        print(images[0]['metadata'])
-    
-    return texts, images, tables
+    # Access tables
+    for table in result['tables']:
+        print(f"\nTable on page {table['metadata']['page']}:")
+        print(f"Caption: {table['metadata']['caption']}")
+        print(f"Dimensions: {table['metadata']['rows']}x{table['metadata']['columns']}")
+        print(f"HTML: {table['html']}")
+        print(f"Data: {table['data']}")
 
 if __name__ == "__main__":
     main()

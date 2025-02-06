@@ -3,161 +3,136 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
-from data_extraction import extract_pdf_elements
+from data_extraction import PDFParser
 from dotenv import load_dotenv
 import time
-from tqdm import tqdm  # For progress bar
+from tqdm import tqdm
 
-
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# Set up environment variables for API keys
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
-# os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY")
-# os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2")
-
-# Add this to disable LangSmith tracing completely
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
-
-# Define paths
-file_path = 'data/attention_paper.pdf'
-
-# Prompt for summarization
-prompt_text = """
-You are an assistant tasked with summarizing tables and text.
-Give a concise summary of the table or text.
-
-Respond only with the summary, no additional comment.
-Do not start your message by saying "Here is a summary" or anything like that.
-Just give the summary as it is.
-
-Table or text chunk: {element}
-"""
-prompt = ChatPromptTemplate.from_template(prompt_text)
-
-# Initialize the model
-model = ChatGroq(
-    temperature=0.5, 
-    model="llama-3.1-8b-instant",
-    max_retries=3  # Add retries for transient errors
-)
-summarize_chain = {"element": lambda x: x} | prompt | model | StrOutputParser()
-
-def process_with_rate_limit(items, process_fn, batch_size=5, delay=2):
-    """Process items in batches with rate limiting"""
-    results = []
-    for i in tqdm(range(0, len(items), batch_size)):
-        batch = items[i:i + batch_size]
-        try:
-            batch_results = process_fn(batch)
-            results.extend(batch_results)
-            if i + batch_size < len(items):  # Don't sleep after the last batch
-                time.sleep(delay)
-        except Exception as e:
-            print(f"Error processing batch: {str(e)}")
-            time.sleep(delay * 2)  # Wait longer on error
-    return results
-
 def summarize_texts(texts):
-    """Summarize text sections with rate limiting."""
-    text_contents = [text['content'] for text in texts]
+    """Summarize text sections with rate limiting"""
+    print("Summarizing text sections...")
     
-    def process_batch(batch):
-        return summarize_chain.batch(batch, {"max_concurrency": 1})
+    # Initialize model
+    model = ChatGroq(
+        temperature=0.5,
+        model="llama-3.1-8b-instant",
+        max_retries=3
+    )
     
-    return process_with_rate_limit(text_contents, process_batch)
+    # Create summarization chain
+    prompt = ChatPromptTemplate.from_template("""
+    Summarize this text section from a research paper.
+    Be concise but preserve key technical details.
+    
+    Text: {text}
+    """)
+    summarize_chain = prompt | model | StrOutputParser()
+    
+    summaries = []
+    for text in tqdm(texts, desc="Processing texts"):
+        try:
+            summary = summarize_chain.invoke({"text": text['content']})
+            summaries.append(summary)
+            time.sleep(0.5)  # Rate limiting
+        except Exception as e:
+            print(f"Error summarizing text: {e}")
+            summaries.append("Error generating summary")
+    
+    return summaries
 
 def summarize_tables(tables):
-    """Summarize table content with improved context"""
-    summaries = []
+    """Summarize tables with improved context"""
+    print("Summarizing tables...")
     
-    for table in tables:
-        if not table.get('text', '').strip():
-            summaries.append("Empty table")
-            continue
-            
-        # Create prompt with table context
-        prompt = f"""Summarize the following table content. Include:
-        1. The type of data presented
-        2. Number of rows ({table['metadata'].get('rows', 'unknown')}) and columns ({table['metadata'].get('columns', 'unknown')})
-        3. Column headers: {', '.join(table['metadata'].get('headers', []))}
-        4. Key patterns or insights
-        5. Any relevant context from caption
-        
-        Table Caption: {table['metadata'].get('caption', 'No caption')}
-        Table Content:
-        {table['text']}
-        
-        Summary:"""
-        
+    model = ChatGroq(
+        temperature=0.5,
+        model="llama-3.1-8b-instant",
+        max_retries=3
+    )
+    
+    prompt = ChatPromptTemplate.from_template("""
+    Summarize this table from a research paper.
+    Include key metrics and findings.
+    
+    Table Content: {content}
+    Caption: {caption}
+    """)
+    summarize_chain = prompt | model | StrOutputParser()
+    
+    summaries = []
+    for table in tqdm(tables, desc="Processing tables"):
         try:
-            summary = summarize_chain.invoke(prompt)
+            summary = summarize_chain.invoke({
+                "content": table.get('data', table.get('content', '')),
+                "caption": table['metadata'].get('caption', 'No caption')
+            })
             summaries.append(summary)
+            time.sleep(0.5)
         except Exception as e:
-            print(f"Error summarizing table: {str(e)}")
+            print(f"Error summarizing table: {e}")
             summaries.append("Error generating summary")
-            
+    
     return summaries
 
 def summarize_images(images):
-    """Summarize images with rate limiting."""
-    def process_batch(batch):
-        messages = [
-            [
+    """Summarize images using GPT-4V"""
+    print("Summarizing images...")
+    
+    model = ChatOpenAI(model="gpt-4o-mini-2024-07-18", max_tokens=500)
+    
+    summaries = []
+    for image in tqdm(images, desc="Processing images"):
+        try:
+            messages = [
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "text", 
-                            "text": """Describe the image in detail. For context, 
-                                     this image is part of a research paper explaining 
-                                     the transformers architecture. Be specific about 
-                                     graphs, such as bar plots."""
+                            "type": "text",
+                            "text": "Describe this figure from a research paper. Focus on technical details and relationships shown."
                         },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image}"}
+                            "image_url": {
+                                "url": f"file://{image['filepath']}"
+                            }
                         }
                     ]
                 }
             ]
-            for image in batch
-        ]
-        
-        chain = ChatOpenAI(model="gpt-4o-mini-2024-07-18", max_tokens=500) | StrOutputParser()
-        return [chain.invoke(msg) for msg in messages]
+            
+            response = model.invoke(messages)
+            summaries.append(response.content)
+            time.sleep(0.5)
+            
+        except Exception as e:
+            print(f"Error summarizing image: {e}")
+            summaries.append("Error generating summary")
     
-    return process_with_rate_limit(images, process_batch, batch_size=1)
+    return summaries
 
 def main():
-    # Extract elements from the PDF
-    texts, images, tables = extract_pdf_elements(file_path)
-
-    # Summarize texts, tables, and images
-    print("\nProcessing Text Summaries...")
-    text_summaries = summarize_texts(texts)
-    print("\nProcessing Table Summaries...")
-    table_summaries = summarize_tables(tables)
+    # Initialize parser
+    parser = PDFParser()
+    pdf_file = "data/attention_paper.pdf"
     
-    print("\nProcessing Image Summaries...")
-    image_summaries = summarize_images([img['content'] for img in images])
-
-    # Print summaries
-    print("\nText Summaries:")
-    for summary in text_summaries:
-        print(summary)
-
-    print("\nTable Summaries:")
-    for summary in table_summaries:
-        print(summary)
-
-    print("\nImage Summaries:")
-    for i, summary in enumerate(image_summaries):
-        print(f"\nImage {i+1}:")
-        print(summary)
-        print("-" * 80)  # Separator line
+    # Extract elements
+    print(f"Processing PDF: {pdf_file}")
+    result = parser.extract_elements(pdf_file)
+    
+    # Generate summaries
+    text_summaries = summarize_texts(result['texts'])
+    table_summaries = summarize_tables(result['tables'])
+    image_summaries = summarize_images(result['images'])
+    
+    # Print results
+    print("\nSummaries Generated:")
+    print(f"Texts: {len(text_summaries)}")
+    print(f"Tables: {len(table_summaries)}")
+    print(f"Images: {len(image_summaries)}")
 
 if __name__ == "__main__":
     main()
