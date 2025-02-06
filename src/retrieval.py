@@ -13,6 +13,7 @@ from data_summarize import summarize_texts, summarize_tables, summarize_images
 from dotenv import load_dotenv
 import json
 from functools import lru_cache
+import streamlit as st
 
 # Load environment variables
 load_dotenv()
@@ -224,12 +225,11 @@ class MultimodalRetriever:
             print("Extracting PDF elements...")
             texts, images, tables = extract_pdf_elements(file_path)
             
-            if not texts and not images and not tables:
+            # Verify we have content
+            if not any([texts, images, tables]):
                 raise ValueError("No content extracted from PDF")
             
-            # Limit to first 20 texts for development
-            texts = texts[:20]
-            print(f"Using first {len(texts)} text sections for development...")
+            print(f"Found {len(texts)} texts, {len(images)} images, {len(tables)} tables")
             
             # Generate summaries with progress tracking
             print("Generating summaries...")
@@ -237,11 +237,19 @@ class MultimodalRetriever:
             table_summaries = summarize_tables(tables) if tables else []
             image_summaries = summarize_images([img['content'] for img in images]) if images else []
             
+            # Verify summaries
+            if not any([text_summaries, table_summaries, image_summaries]):
+                raise ValueError("Failed to generate summaries")
+            
             # Prepare documents
             print("Preparing documents...")
             text_docs, text_ids, text_originals = self.prepare_text_documents(texts, text_summaries)
             table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
             image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
+            
+            # Verify documents
+            if not any([text_docs, table_docs, image_docs]):
+                raise ValueError("No documents prepared for vector store")
             
             # Clear existing vectors
             print("Clearing existing vectors...")
@@ -252,7 +260,7 @@ class MultimodalRetriever:
                 except Exception as e:
                     print(f"No existing vectors in {namespace} namespace")
             
-            # Add documents in batches
+            # Add documents in batches with verification
             batch_size = 100
             for namespace, docs in [
                 ("text", text_docs),
@@ -260,10 +268,11 @@ class MultimodalRetriever:
                 ("image", image_docs)
             ]:
                 if docs:
-                    print(f"Adding documents to {namespace} namespace...")
+                    print(f"Adding {len(docs)} documents to {namespace} namespace...")
                     for i in range(0, len(docs), batch_size):
                         batch = docs[i:i + batch_size]
                         self.vectorstore.add_documents(batch, namespace=namespace)
+                        print(f"Added batch {i//batch_size + 1} to {namespace} namespace")
             
             # Store originals
             print("Storing original documents...")
@@ -288,7 +297,7 @@ class MultimodalRetriever:
             results = {
                 "texts": self.vectorstore.similarity_search(
                     query, k=k, namespace="text",
-                    filter={"type": {"$in": ["text", "title", "heading", "paragraph"]}}  # Add type filter
+                    filter={"type": {"$in": ["text", "title", "heading", "paragraph"]}}
                 ),
                 "tables": self.vectorstore.similarity_search(
                     query, k=k, namespace="table"
@@ -298,13 +307,17 @@ class MultimodalRetriever:
                 )
             }
             
-            # Display retrieved images
+            # Display retrieved images using Streamlit
             print("\nRetrieved Images:")
             for img_doc in results["images"]:
                 print(f"\nImage Summary: {img_doc.metadata['summary']}")
                 print(f"Caption: {img_doc.metadata['caption']}")
                 if os.path.exists(img_doc.metadata['filepath']):
-                    display_saved_image(img_doc.metadata['filepath'])
+                    img = display_saved_image(img_doc.metadata['filepath'])
+                    if img:
+                        # Use st.container to avoid threading warnings
+                        with st.container():
+                            st.image(img, caption=img_doc.metadata['caption'])
             
             return results
             

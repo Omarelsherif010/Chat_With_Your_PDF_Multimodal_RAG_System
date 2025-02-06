@@ -13,13 +13,36 @@ def initialize_session_state():
         st.session_state.rag = None
     if 'initialized' not in st.session_state:
         st.session_state.initialized = False
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
 
 def display_base64_image(base64_str):
     """Display base64 image in Streamlit"""
-    if base64_str.startswith('data:image'):
-        # Remove the data URI prefix
-        base64_str = base64_str.split(',')[1]
-    st.image(base64.b64decode(base64_str))
+    try:
+        if base64_str.startswith('data:image'):
+            # Remove the data URI prefix
+            base64_str = base64_str.split(',')[1]
+        st.image(base64.b64decode(base64_str))
+    except Exception as e:
+        st.error(f"Error displaying image: {str(e)}")
+
+def format_source_text(text_source):
+    """Format text source for display"""
+    try:
+        return {
+            'content': text_source.get('content', ''),
+            'page': text_source.get('metadata', {}).get('page', 'Unknown'),
+            'type': text_source.get('metadata', {}).get('type', 'text'),
+            'summary': text_source.get('metadata', {}).get('summary', 'No summary available')
+        }
+    except Exception as e:
+        st.error(f"Error formatting text source: {str(e)}")
+        return {
+            'content': str(text_source),
+            'page': 'Unknown',
+            'type': 'text',
+            'summary': 'Error formatting source'
+        }
 
 def main():
     st.set_page_config(
@@ -74,50 +97,61 @@ def main():
                     try:
                         result = st.session_state.rag.query(query, return_sources=show_sources)
                         
-                        if show_sources:
-                            # Display response in a container
-                            with st.container():
-                                st.markdown("### Response")
-                                st.markdown(result["response"])
-                            
-                            # Display sources in expandable sections
+                        # Add to chat history
+                        st.session_state.chat_history.append({
+                            "question": query,
+                            "answer": result["response"] if show_sources else result,
+                            "sources": result.get("sources") if show_sources else None
+                        })
+                        
+                        # Display latest response
+                        st.markdown("### Response")
+                        st.markdown(st.session_state.chat_history[-1]["answer"])
+                        
+                        if show_sources and "sources" in result:
                             st.markdown("### Sources Used")
                             
                             # Text sources
-                            if result["sources"]["texts"]:
+                            if result["sources"].get("texts"):
                                 with st.expander("📝 Text Sources", expanded=False):
                                     for i, text in enumerate(result["sources"]["texts"]):
-                                        st.markdown(f"**Text {i+1} (Page {text['metadata']['page']}):**")
-                                        st.markdown(text['content'])
-                                        st.markdown(f"*Summary: {text['metadata']['summary']}*")
+                                        formatted_text = format_source_text(text)
+                                        st.markdown(f"**Text {i+1} (Page {formatted_text['page']}):**")
+                                        st.markdown(formatted_text['content'])
+                                        st.markdown(f"*Summary: {formatted_text['summary']}*")
                                         st.divider()
                             
                             # Table sources
-                            if result["sources"]["tables"]:
+                            if result["sources"].get("tables"):
                                 with st.expander("📊 Table Sources", expanded=False):
                                     for i, table in enumerate(result["sources"]["tables"]):
-                                        st.markdown(f"**Table {i+1} (Page {table['metadata']['page']}):**")
-                                        st.markdown(table['content'])
-                                        st.markdown(f"*Summary: {table['metadata']['summary']}*")
+                                        st.markdown(f"**Table {i+1} (Page {table['metadata'].get('page', 'Unknown')}):**")
+                                        st.markdown(table['text'])
+                                        st.markdown(f"*Caption: {table['metadata'].get('caption', 'No caption')}*")
                                         st.divider()
                             
                             # Image sources
-                            if result["sources"]["images"]:
+                            if result["sources"].get("images"):
                                 with st.expander("🖼️ Image Sources", expanded=True):
                                     for i, img in enumerate(result["sources"]["images"]):
-                                        st.markdown(f"**Image {i+1} (Page {img['metadata']['page']}):**")
-                                        display_base64_image(img['content'])
-                                        st.markdown(f"**Caption:** {img['metadata']['caption']}")
-                                        st.markdown(f"*Summary: {img['metadata']['summary']}*")
+                                        st.markdown(f"**Image {i+1} (Page {img['metadata'].get('page', 'Unknown')}):**")
+                                        if os.path.exists(img['metadata'].get('filepath', '')):
+                                            st.image(img['metadata']['filepath'])
+                                        st.markdown(f"**Caption:** {img['metadata'].get('caption', 'No caption')}")
+                                        st.markdown(f"*Summary: {img['metadata'].get('summary', 'No summary available')}*")
                                         st.divider()
-                        else:
-                            st.markdown("### Response")
-                            st.markdown(result)
-                            
+                    
                     except Exception as e:
                         st.error(f"Error generating response: {str(e)}")
             else:
                 st.warning("Please enter a question.")
+        
+        # Display chat history
+        if st.session_state.chat_history:
+            st.markdown("### Chat History")
+            for i, chat in enumerate(reversed(st.session_state.chat_history[:-1]), 1):
+                with st.expander(f"Q: {chat['question']}", expanded=False):
+                    st.markdown(chat['answer'])
     else:
         st.info("Please initialize the system using the button in the sidebar.")
 

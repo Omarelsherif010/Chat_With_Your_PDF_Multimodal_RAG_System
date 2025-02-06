@@ -171,3 +171,5 @@ cython_debug/
 .pypirc
 *.sqlite3
 /src/chroma_db
+
+parse_cache/
