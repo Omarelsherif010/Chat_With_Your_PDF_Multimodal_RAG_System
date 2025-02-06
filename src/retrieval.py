@@ -1,6 +1,6 @@
 import os
 import uuid
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain.storage import InMemoryStore
 from langchain.schema.document import Document
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -38,7 +38,7 @@ class MultimodalRetriever:
         # Initialize embeddings
         self.embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
         
-        # Initialize stores
+        # Initialize stores with updated Chroma import
         self.text_vectorstore = Chroma(
             collection_name="text_store",
             embedding_function=self.embeddings,
@@ -166,40 +166,52 @@ class MultimodalRetriever:
     
     def initialize_vectorstores(self):
         """Initialize vector stores with content and summaries"""
-        # Extract content
-        print("Extracting PDF elements...")
-        texts, images, tables = extract_pdf_elements(file_path)
-        
-        # Limit to first 10 texts for development
-        texts = texts[:50]  # Take only first 50 texts
-        print(f"Using first {len(texts)} text sections for development...")
-        
-        # Generate summaries
-        print("Generating summaries...")
-        text_summaries = summarize_texts(texts)
-        table_summaries = summarize_tables(tables)
-        image_summaries = summarize_images([img['content'] for img in images])
-        
-        # Prepare documents
-        text_docs, text_ids, text_originals = self.prepare_text_documents(texts, text_summaries)
-        table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
-        image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
-        
-        print(f"Processing {len(texts)} texts, {len(tables)} tables, {len(images)} images...")
-        
-        # Add documents to vector stores
-        print("Adding documents to vector stores...")
-        self.text_vectorstore.add_documents(text_docs)
-        self.table_vectorstore.add_documents(table_docs)
-        self.image_vectorstore.add_documents(image_docs)
-        
-        # Store original documents
-        self.text_store.mset(list(zip(text_ids, text_originals)))
-        self.table_store.mset(list(zip(table_ids, table_originals)))
-        self.image_store.mset(list(zip(image_ids, image_originals)))
-        
-        print("Vector stores initialized successfully!")
-        
+        try:
+            # Extract content
+            print("Extracting PDF elements...")
+            texts, images, tables = extract_pdf_elements(file_path)
+            
+            # Limit to first 20 texts for development
+            texts = texts[:20]  # Take only first 20 texts
+            print(f"Using first {len(texts)} text sections for development...")
+            
+            # Generate summaries
+            print("Generating summaries...")
+            text_summaries = summarize_texts(texts)
+            print("Text summaries generated.")
+            table_summaries = summarize_tables(tables)
+            print("Table summaries generated.")
+            image_summaries = summarize_images([img['content'] for img in images])
+            print("Image summaries generated.")
+            
+            # Prepare documents
+            print("Preparing documents...")
+            text_docs, text_ids, text_originals = self.prepare_text_documents(texts, text_summaries)
+            table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
+            image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
+            
+            print(f"Processing {len(texts)} texts, {len(tables)} tables, {len(images)} images...")
+            
+            # Add documents to vector stores
+            print("Adding documents to text vector store...")
+            self.text_vectorstore.add_documents(text_docs)
+            print("Adding documents to table vector store...")
+            self.table_vectorstore.add_documents(table_docs)
+            print("Adding documents to image vector store...")
+            self.image_vectorstore.add_documents(image_docs)
+            
+            # Store original documents
+            print("Storing original documents...")
+            self.text_store.mset(list(zip(text_ids, text_originals)))
+            self.table_store.mset(list(zip(table_ids, table_originals)))
+            self.image_store.mset(list(zip(image_ids, image_originals)))
+            
+            print("Vector stores initialized successfully!")
+            return True
+        except Exception as e:
+            print(f"Error in initialize_vectorstores: {str(e)}")
+            raise e
+    
     @lru_cache(maxsize=100)
     def retrieve(self, query, k=2):
         """Retrieve relevant content with caching"""

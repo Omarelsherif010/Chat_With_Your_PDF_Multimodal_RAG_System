@@ -21,7 +21,25 @@ class MultimodalRAG:
         
     def initialize(self):
         """Initialize the retriever and vector stores"""
-        self.retriever.initialize_vectorstores()
+        try:
+            # Check if API keys are available
+            if not os.getenv("OPENAI_API_KEY"):
+                raise ValueError("OpenAI API key not found. Please provide it in the sidebar.")
+            if not os.getenv("GROQ_API_KEY"):
+                raise ValueError("Groq API key not found. Please provide it in the sidebar.")
+            
+            print("Initializing RAG system...")
+            success = self.retriever.initialize_vectorstores()
+            if not success:
+                raise Exception("Failed to initialize vector stores")
+            
+            print("Creating chain...")
+            self.create_chain()
+            print("Initialization complete!")
+            return True
+        except Exception as e:
+            print(f"Error during initialization: {str(e)}")
+            raise e
     
     def parse_retrieved_content(self, retrieved_docs):
         """Parse retrieved content into text and images"""
@@ -135,6 +153,38 @@ class MultimodalRAG:
             for i, doc in enumerate(texts)
         ])
     
+    def _format_technical_details(self, texts):
+        """Format technical details from text sections"""
+        technical_sections = [
+            doc for doc in texts
+            if any(term in doc['content'].lower() 
+                  for term in ["algorithm", "implementation", "method", "technique"])
+        ]
+        return "\n\n".join([
+            f"Technical Detail (Page {doc['metadata']['page']}):\n{doc['content']}"
+            for doc in technical_sections
+        ]) or "No technical details found."
+    
+    def _format_equations(self, texts):
+        """Format equations from text sections"""
+        equation_sections = [
+            doc for doc in texts
+            if any(symbol in doc['content'] for symbol in ["=", "∑", "∫", "×", "÷"])
+        ]
+        return "\n\n".join([
+            f"Equation (Page {doc['metadata']['page']}):\n{doc['content']}"
+            for doc in equation_sections
+        ]) or "No equations found."
+    
+    def _format_tables(self, tables):
+        """Format tables with better structure"""
+        return "\n\n".join([
+            f"Table (Page {doc['metadata']['page']}):\n"
+            f"Content: {doc['content']}\n"
+            f"Summary: {doc['metadata']['summary']}"
+            for doc in tables
+        ]) if tables else "No tables found."
+    
     def create_chain(self):
         """Create the RAG chain"""
         # Basic chain
@@ -187,9 +237,9 @@ def main():
     rag = MultimodalRAG()
     print("Initializing RAG system...")
     rag.initialize()
-    rag.create_chain()
     
     # Interactive query loop
+    print("\nSystem ready for queries!")
     while True:
         query = input("\nEnter your question (or 'quit' to exit): ")
         if query.lower() == 'quit':

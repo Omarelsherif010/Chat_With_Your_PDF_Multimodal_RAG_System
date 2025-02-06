@@ -1958,6 +1958,26 @@ SQLAlchemy = ">=1.4,<3"
 tenacity = ">=8.1.0,<8.4.0 || >8.4.0,<10"
 
 [[package]]
+name = "langchain-chroma"
+version = "0.2.1"
+description = "An integration package connecting Chroma and LangChain"
+optional = false
+python-versions = "<4,>=3.9"
+files = [
+    {file = "langchain_chroma-0.2.1-py3-none-any.whl", hash = "sha256:4acc3fc5e919991ab412153819965e8dd9caf7e65873be2da432dc8e59cf05bb"},
+    {file = "langchain_chroma-0.2.1.tar.gz", hash = "sha256:ebda061164243c9fdd081903aaa8f8559847d3aec945b9aa143a5075f57cd4dd"},
+]
+
+[package.dependencies]
+chromadb = ">=0.4.0,<0.5.4 || >0.5.4,<0.5.5 || >0.5.5,<0.5.7 || >0.5.7,<0.5.9 || >0.5.9,<0.5.10 || >0.5.10,<0.5.11 || >0.5.11,<0.5.12 || >0.5.12,<0.7.0"
+fastapi = ">=0.95.2,<1"
+langchain-core = ">=0.2.43,<0.3.0 || >0.3.0,<0.3.1 || >0.3.1,<0.3.2 || >0.3.2,<0.3.3 || >0.3.3,<0.3.4 || >0.3.4,<0.3.5 || >0.3.5,<0.3.6 || >0.3.6,<0.3.7 || >0.3.7,<0.3.8 || >0.3.8,<0.3.9 || >0.3.9,<0.3.10 || >0.3.10,<0.3.11 || >0.3.11,<0.3.12 || >0.3.12,<0.3.13 || >0.3.13,<0.3.14 || >0.3.14,<0.4.0"
+numpy = [
+    {version = ">=1.22.4,<2.0.0", markers = "python_version < \"3.12\""},
+    {version = ">=1.26.2,<2.0.0", markers = "python_version >= \"3.12\""},
+]
+
+[[package]]
 name = "langchain-community"
 version = "0.3.16"
 description = "Community contributed LangChain integrations."
@@ -6098,4 +6118,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.13"
-content-hash = "8996ea051c7521825c7919cf0c34e9c7102036b36a8ded236c839ddd159fb2b6"
+content-hash = "cdeec75080e2235963a60128607518336351b375487a6fd2811560409830aa0a"
