@@ -1,6 +1,10 @@
 import os
 import uuid
-from langchain_community.vectorstores import Chroma
+try:
+    from langchain_chroma import Chroma
+except ImportError:
+    logger.warning("langchain_chroma not found, falling back to legacy import")
+    from langchain_community.vectorstores import Chroma
 from langchain.storage import InMemoryStore
 from langchain.schema.document import Document
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -14,6 +18,10 @@ import json
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import time
+from time import perf_counter
+import logging
+from dataclasses import dataclass
+from config import settings
 
 # Load environment variables
 load_dotenv()
@@ -24,37 +32,86 @@ persist_directory = "./chroma_db"
 file_path = 'data/attention_paper.pdf'
 output_path = "./pdf_extracted_content/"
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('rag_system.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class RetrievalMetrics:
+    text_time: float
+    table_time: float
+    image_time: float
+    total_time: float
 
 class MultimodalRetriever:
-    def __init__(self):
+    """A retriever for handling multimodal content from research papers.
+    
+    This class manages the retrieval of text, tables, and images from a research paper,
+    using vector stores for similarity search and maintaining metadata about the content.
+    
+    Attributes:
+        persist_directory (str): Directory for vector store persistence
+        output_path (str): Path for extracted content
+        batch_size (int): Size of batches for processing
+        
+    Methods:
+        retrieve: Retrieve relevant content for a query
+        initialize_vectorstores: Set up vector stores with content
+        cleanup: Clean up resources
+    """
+    def __init__(self, persist_directory: str = "./chroma_db", 
+                 output_path: str = "./pdf_extracted_content/",
+                 batch_size: int = 5):
+        """Initialize the retriever with configurable settings"""
         # Load environment variables
         load_dotenv()
         
+        # Store configuration
+        self.persist_directory = persist_directory
+        self.output_path = output_path
+        self.batch_size = batch_size
+        
+        # Initialize components
+        self._initialize_components()
+        
+        # Register cleanup on exit
+        import atexit
+        atexit.register(self.cleanup)
+    
+    def _initialize_components(self):
+        """Initialize embeddings, stores and other components"""
         # Debug print (remove after testing)
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key and api_key.startswith("sk-"):
-            print(f"API key loaded successfully: {api_key[:10]}...")
+            logger.info(f"API key loaded successfully: {api_key[:10]}...")
         else:
-            print(f"Warning: API key not found or invalid format: {api_key[:10] if api_key else 'None'}")
+            logger.warning(f"Warning: API key not found or invalid format")
         
         # Initialize embeddings
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
+        self.embeddings = OpenAIEmbeddings(model=settings.EMBEDDING_MODEL)
         
         # Initialize stores
         self.text_vectorstore = Chroma(
             collection_name="text_store",
             embedding_function=self.embeddings,
-            persist_directory=persist_directory
+            persist_directory=self.persist_directory
         )
         self.table_vectorstore = Chroma(
             collection_name="table_store",
             embedding_function=self.embeddings,
-            persist_directory=persist_directory
+            persist_directory=self.persist_directory
         )
         self.image_vectorstore = Chroma(
             collection_name="image_store",
             embedding_function=self.embeddings,
-            persist_directory=persist_directory
+            persist_directory=self.persist_directory
         )
         
         # Initialize document stores
@@ -62,18 +119,18 @@ class MultimodalRetriever:
         self.table_store = InMemoryStore()
         self.image_store = InMemoryStore()
         
-        # Improve text splitting for better context
+        # Initialize text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,  # Smaller chunks for more precise retrieval
+            chunk_size=500,
             chunk_overlap=100,
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
         )
         
-        # Initialize LLM for response generation
-        self.llm = ChatOpenAI(model="gpt-4o-mini-2024-07-18", temperature=0.7)
+        # Initialize LLM
+        self.llm = ChatOpenAI(model=settings.MODEL_NAME, temperature=0.7)
         
-        # Add metadata filters for better retrieval
+        # Set up retrieval filters
         self.retrieval_filters = {
             "text": lambda x: x["type"] == "text",
             "equation": lambda x: "equation" in x["section_type"].lower(),
@@ -81,19 +138,43 @@ class MultimodalRetriever:
                                     for term in ["algorithm", "formula", "equation", "implementation"])
         }
 
-        # Add cleanup method
-        def cleanup(self):
-            """Clean up resources"""
+    def cleanup(self):
+        """Clean up resources"""
+        try:
+            logger.info("Cleaning up vector stores...")
             try:
-                self.text_vectorstore.delete_collection()
-                self.table_vectorstore.delete_collection()
-                self.image_vectorstore.delete_collection()
+                if hasattr(self, 'text_vectorstore'):
+                    self.text_vectorstore.delete_collection()
             except Exception as e:
-                print(f"Error during cleanup: {str(e)}")
-                
-        # Register cleanup on exit
-        import atexit
-        atexit.register(self.cleanup)
+                logger.warning(f"Error cleaning text store: {str(e)}")
+            
+            try:
+                if hasattr(self, 'table_vectorstore'):
+                    self.table_vectorstore.delete_collection()
+            except Exception as e:
+                logger.warning(f"Error cleaning table store: {str(e)}")
+            
+            try:
+                if hasattr(self, 'image_vectorstore'):
+                    self.image_vectorstore.delete_collection()
+            except Exception as e:
+                logger.warning(f"Error cleaning image store: {str(e)}")
+            
+            # Clear document stores
+            if hasattr(self, 'text_store'):
+                self.text_store.clear()
+            if hasattr(self, 'table_store'):
+                self.table_store.clear()
+            if hasattr(self, 'image_store'):
+                self.image_store.clear()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            logger.info("Cleanup completed successfully")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
 
     def prepare_text_documents(self, texts, summaries):
         """Prepare text documents with their summaries"""
@@ -164,7 +245,7 @@ class MultimodalRetriever:
                 "page": image["metadata"]["page"],
                 "caption": image["metadata"].get("caption", "No caption"),
                 "filename": image["metadata"]["filename"],
-                "filepath": os.path.join(output_path, image["metadata"]["filename"]),
+                "filepath": os.path.join(self.output_path, image["metadata"]["filename"]),
                 "summary": summary
             }
             
@@ -194,21 +275,15 @@ class MultimodalRetriever:
     def initialize_vectorstores(self):
         """Initialize vector stores with content and summaries"""
         try:
-            # Add persistence checks and cleanup
-            if os.path.exists(persist_directory):
-                print("Found existing vector stores. Clearing...")
-                for collection in ["text_store", "table_store", "image_store"]:
-                    try:
-                        store = Chroma(collection_name=collection, 
-                                     embedding_function=self.embeddings,
-                                     persist_directory=persist_directory)
-                        store.delete_collection()
-                    except Exception as e:
-                        print(f"Error clearing {collection}: {str(e)}")
+            # Cleanup existing stores
+            self.cleanup()
             
             # Extract content
-            print("Extracting PDF elements...")
-            texts, images, tables = extract_pdf_elements(file_path)
+            logger.info("Extracting PDF elements...")
+            texts, images, tables = extract_pdf_elements(settings.pdf_path)
+            if not texts and not images and not tables:
+                logger.error("No content extracted from PDF")
+                return False
             
             # Limit data for testing
             texts = texts[:20]  # Process only first 20 texts for testing
@@ -245,27 +320,57 @@ class MultimodalRetriever:
             print("Vector stores initialized successfully!")
             return True
         except Exception as e:
-            print(f"Error during initialization: {str(e)}")
+            logger.error(f"Error during initialization: {str(e)}")
             return False
     
-    @lru_cache(maxsize=100)
-    def retrieve(self, query, k=2):
-        """Retrieve relevant content with caching"""
+    def retrieve(self, query: str, k: int = 2) -> dict:
+        """Enhanced retrieval with better error handling"""
+        metrics = RetrievalMetrics(0, 0, 0, 0)
+        start_time = perf_counter()
+        
         results = {
-            "texts": self.text_vectorstore.similarity_search(query, k=k),
-            "tables": self.table_vectorstore.similarity_search(query, k=k),
-            "images": self.image_vectorstore.similarity_search(query, k=k)
+            "texts": [],
+            "tables": [],
+            "images": [],
+            "metrics": metrics
         }
         
-        # Display retrieved images
-        print("\nRetrieved Images:")
-        for img_doc in results["images"]:
-            print(f"\nImage Summary: {img_doc.metadata['summary']}")
-            print(f"Caption: {img_doc.metadata['caption']}")
-            if os.path.exists(img_doc.metadata['filepath']):
-                display_saved_image(img_doc.metadata['filepath'])
+        try:
+            # Measure text retrieval
+            text_start = perf_counter()
+            try:
+                results["texts"] = self.text_vectorstore.similarity_search(query, k=k)
+            except Exception as e:
+                logger.error(f"Text retrieval failed: {str(e)}")
+            finally:
+                metrics.text_time = perf_counter() - text_start
             
-        return results
+            # Measure table retrieval
+            table_start = perf_counter()
+            try:
+                results["tables"] = self.table_vectorstore.similarity_search(query, k=k)
+            except Exception as e:
+                logger.error(f"Table retrieval failed: {str(e)}")
+            finally:
+                metrics.table_time = perf_counter() - table_start
+            
+            # Measure image retrieval
+            image_start = perf_counter()
+            try:
+                results["images"] = self.image_vectorstore.similarity_search(query, k=k)
+            except Exception as e:
+                logger.error(f"Image retrieval failed: {str(e)}")
+            finally:
+                metrics.image_time = perf_counter() - image_start
+            
+            metrics.total_time = perf_counter() - start_time
+            logger.info(f"Retrieval metrics: {metrics}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Retrieval failed: {str(e)}")
+            raise
     
     def generate_response(self, query, retrieved_content):
         """Generate response using retrieved content and summaries"""

@@ -118,6 +118,20 @@ def summarize_images(images):
     
     return process_with_rate_limit(images, process_batch, batch_size=1)
 
+def retry_items(items, process_fn, max_retries):
+    """Add missing retry function"""
+    results = []
+    for item in items:
+        for attempt in range(max_retries):
+            try:
+                result = process_fn([item])
+                results.extend(result)
+                break
+            except Exception as e:
+                print(f"Retry {attempt + 1}/{max_retries} failed: {str(e)}")
+                time.sleep(2 ** attempt)  # Exponential backoff
+    return results
+
 def main():
     # Extract elements from the PDF
     texts, images, tables = extract_pdf_elements(file_path)

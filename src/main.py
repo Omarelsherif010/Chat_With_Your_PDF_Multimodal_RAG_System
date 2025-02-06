@@ -8,16 +8,58 @@ from base64 import b64decode, b64encode
 from dotenv import load_dotenv
 import json
 from retrieval import MultimodalRetriever
+import logging
+from pydantic import BaseModel, Field
+from config import settings
+import atexit
+import signal
+from dataclasses import dataclass, asdict
+import time
+from typing import Dict, List, Optional, Any
 
 # Load environment variables
 load_dotenv()
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
+# Add proper logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('rag_system.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class QueryInput(BaseModel):
+    question: str = Field(..., min_length=3, max_length=1000)
+    return_sources: bool = Field(default=False)
+
+@dataclass
+class SystemMetrics:
+    query_count: int = 0
+    avg_response_time: float = 0
+    error_count: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
 
 class MultimodalRAG:
     def __init__(self):
-        self.retriever = MultimodalRetriever()
+        self.chain = None
+        self.chain_with_sources = None
+        # Initialize retriever with settings
+        self.retriever = MultimodalRetriever(
+            persist_directory=settings.PERSIST_DIRECTORY,
+            output_path=settings.OUTPUT_PATH,
+            batch_size=settings.BATCH_SIZE
+        )
+        
+        # Register shutdown handlers
+        atexit.register(self.shutdown)
+        signal.signal(signal.SIGTERM, self.shutdown)
+        signal.signal(signal.SIGINT, self.shutdown)
         
         # Add error handling wrapper
         def error_handler(func):
@@ -33,10 +75,25 @@ class MultimodalRAG:
         # Apply to key methods
         self.query = error_handler(self.query)
         self.initialize = error_handler(self.initialize)
+        
+        self.metrics = SystemMetrics()
     
     def initialize(self):
-        """Initialize the retriever and vector stores"""
-        self.retriever.initialize_vectorstores()
+        """Initialize the system"""
+        try:
+            # First create chains
+            self.create_chain()
+            
+            # Then initialize retriever
+            success = self.retriever.initialize_vectorstores()
+            if not success:
+                logger.error("Failed to initialize vector stores")
+                return False
+            
+            return True
+        except Exception as e:
+            logger.error(f"Initialization failed: {str(e)}")
+            return False
     
     def parse_retrieved_content(self, retrieved_docs):
         """Parse retrieved content into text and images"""
@@ -82,63 +139,34 @@ class MultimodalRAG:
             "images": images
         }
     
-    def build_prompt(self, kwargs):
-        """Build prompt with context and question"""
-        context = kwargs["context"]
-        question = kwargs["question"]
+    def build_prompt(self, inputs: dict) -> str:
+        """Build prompt from inputs"""
+        context = inputs["context"]
+        question = inputs["question"]
         
-        # Enhanced prompt structure
-        prompt_content = [
-            SystemMessage(content="""You are an expert AI assistant analyzing research papers. When answering:
-            1. Start with a clear, concise explanation
-            2. Include relevant mathematical formulas when available
-            3. Reference specific sections from the paper
-            4. Explain technical implementation details
-            5. Connect concepts to the visual diagrams when relevant
-            6. Use markdown formatting for better readability"""),
-            HumanMessage(content=[{
-                "type": "text",
-                "text": f"""Answer the question based on the following context from the research paper.
-                
-                Text Sections:
-                {self._format_text_sections(context["texts"])}
-                
-                Technical Details:
-                {self._format_technical_details(context["texts"])}
-                
-                Mathematical Formulas:
-                {self._format_equations(context["texts"])}
-                
-                Tables:
-                {self._format_tables(context["tables"])}
-                
-                Question: {question}"""
-            }])
-        ]
+        # Format context sections
+        text_sections = "\n".join([f"Text: {doc.page_content}" for doc in context["texts"]])
+        table_sections = "\n".join([f"Table: {doc.page_content}" for doc in context["tables"]])
+        image_sections = "\n".join([f"Image: {doc.page_content}" for doc in context["images"]])
         
-        # Add images with better context
-        if context["images"]:
-            for i, img in enumerate(context["images"]):
-                prompt_content[-1].content.extend([
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": img["content"]}
-                    },
-                    {
-                        "type": "text",
-                        "text": f"""
-                        Figure {i+1}:
-                        Caption: {img['metadata']['caption']}
-                        Summary: {img['metadata']['summary']}
-                        Key Elements to Notice:
-                        - Mathematical relationships shown
-                        - Architecture components
-                        - Data flow and transformations
-                        """
-                    }
-                ])
+        prompt = f"""Use the following retrieved information to answer the question.
         
-        return prompt_content
+        Context:
+        {text_sections}
+        
+        Tables:
+        {table_sections}
+        
+        Images:
+        {image_sections}
+        
+        Question: {question}
+        
+        Answer the question based on the provided context. If referring to images or tables, 
+        be specific about which ones you're referencing. If you don't find relevant information, 
+        say so."""
+        
+        return prompt
     
     def _format_text_sections(self, texts):
         """Format text sections with better structure"""
@@ -222,58 +250,99 @@ class MultimodalRAG:
 
     def create_chain(self):
         """Create the RAG chain"""
-        # Basic chain
+        # Create the base chain
+        prompt_template = """Use the following retrieved information to answer the question.
+        
+        Context:
+        {context}
+        
+        Question: {question}
+        
+        Answer the question based on the provided context. If referring to images or tables, 
+        be specific about which ones you're referencing. If you don't find relevant information, 
+        say so."""
+        
+        prompt = ChatPromptTemplate.from_template(prompt_template)
+        
+        # Create the base chain
         self.chain = (
-            {
-                "context": self.retriever.retrieve | RunnableLambda(self.parse_retrieved_content),
-                "question": RunnablePassthrough()
-            }
-            | RunnableLambda(self.build_prompt)
-            | ChatOpenAI(model="gpt-4-turbo-preview", max_tokens=1000)
+            {"context": lambda x: self.retriever.retrieve(x["question"]), 
+             "question": RunnablePassthrough()}
+            | prompt
+            | ChatOpenAI(model=settings.MODEL_NAME, max_tokens=1000)
             | StrOutputParser()
         )
         
-        # Chain with sources
-        self.chain_with_sources = {
-            "context": self.retriever.retrieve | RunnableLambda(self.parse_retrieved_content),
-            "question": RunnablePassthrough()
-        } | RunnablePassthrough().assign(
-            response=(
-                RunnableLambda(self.build_prompt)
-                | ChatOpenAI(model="gpt-4-turbo-preview", max_tokens=1000)
-                | StrOutputParser()
-            )
+        # Create chain with sources
+        self.chain_with_sources = (
+            {"question": RunnablePassthrough()}
+            | {
+                "context": lambda x: self.retriever.retrieve(x["question"]),
+                "response": lambda x: (
+                    prompt.invoke({"context": x["context"], "question": x["question"]})
+                    | ChatOpenAI(model=settings.MODEL_NAME, max_tokens=1000)
+                    | StrOutputParser()
+                ),
+                "sources": lambda x: x["context"]
+            }
         )
     
     def query(self, question: str, return_sources: bool = False):
         """Query the RAG system"""
-        if return_sources:
-            result = self.chain_with_sources.invoke(question)
-            return {
-                "response": result["response"],
-                "sources": result["context"]
-            }
-        else:
-            return self.chain.invoke(question)
+        try:
+            # Validate input
+            input_data = QueryInput(
+                question=question,
+                return_sources=return_sources
+            )
+            
+            # Update metrics
+            start_time = time.time()
+            self.metrics.query_count += 1
+            
+            try:
+                if return_sources:
+                    result = self.chain_with_sources.invoke(input_data.question)
+                else:
+                    result = self.chain.invoke(input_data.question)
+                    
+                # Update response time metric
+                query_time = time.time() - start_time
+                self.metrics.avg_response_time = (
+                    (self.metrics.avg_response_time * (self.metrics.query_count - 1) + query_time)
+                    / self.metrics.query_count
+                )
+                
+                return result
+                
+            except Exception as e:
+                self.metrics.error_count += 1
+                logger.error(f"Query processing error: {str(e)}")
+                raise
+                
+        except ValueError as e:
+            logger.error(f"Invalid input: {str(e)}")
+            raise
 
-    def evaluate_response(self, response, context):
-        """Evaluate response quality"""
-        metrics = {
+    def evaluate_response(self, response: str, context: Dict[str, List[Any]]) -> Dict[str, Any]:
+        """Evaluate response quality with metrics"""
+        return {
             "completeness": self._check_completeness(response, context),
             "technical_depth": self._check_technical_depth(response),
             "visual_reference": self._check_visual_references(response, context),
             "mathematical_clarity": self._check_mathematical_clarity(response),
             "source_citation": self._check_source_citations(response, context)
         }
-        return metrics
 
-    def _check_completeness(self, response, context):
+    def _check_completeness(self, response: str, context: Dict[str, List[Any]]) -> float:
         """Check if response covers all relevant points"""
         key_points = set()
         for doc in context["texts"]:
-            # Extract key terms from content
-            terms = set(doc['content'].lower().split())
+            terms = set(doc.page_content.lower().split())
             key_points.update(terms)
+        
+        if not key_points:
+            return 0.0
         
         response_terms = set(response.lower().split())
         coverage = len(key_points.intersection(response_terms)) / len(key_points)
@@ -338,6 +407,54 @@ class MultimodalRAG:
             if src.metadata.get('type') == 'text':
                 citations.append(f"[{len(citations)+1}] Page {src.metadata['page']}: {src.metadata['section_type']}")
         return "\n\nReferences:\n" + "\n".join(citations)
+
+    def health_check(self) -> dict:
+        """System health check"""
+        status = {
+            "vectorstores": {},
+            "models": {},
+            "storage": {}
+        }
+        
+        # Check vector stores
+        for store_name in ["text", "table", "image"]:
+            try:
+                store = getattr(self.retriever, f"{store_name}_vectorstore")
+                count = len(store.get())
+                status["vectorstores"][store_name] = {
+                    "status": "healthy",
+                    "document_count": count
+                }
+            except Exception as e:
+                status["vectorstores"][store_name] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+        
+        # Check model availability
+        try:
+            self.llm.invoke("test")
+            status["models"]["llm"] = "healthy"
+        except Exception as e:
+            status["models"]["llm"] = f"error: {str(e)}"
+            
+        return status
+
+    def shutdown(self, *args):
+        """Graceful shutdown"""
+        logger.info("Shutting down RAG system...")
+        try:
+            # Cleanup vector stores
+            self.retriever.cleanup()
+            # Close any open files
+            # Save any pending data
+            logger.info("Shutdown complete")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {str(e)}")
+
+    def collect_metrics(self):
+        """Return system metrics"""
+        return asdict(self.metrics)
 
 def main():
     # Initialize RAG system
