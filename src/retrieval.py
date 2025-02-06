@@ -1,6 +1,7 @@
 import os
 import uuid
-from langchain_chroma import Chroma
+from pinecone import Pinecone, ServerlessSpec
+from langchain_pinecone import PineconeVectorStore
 from langchain.storage import InMemoryStore
 from langchain.schema.document import Document
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -28,31 +29,38 @@ class MultimodalRetriever:
         # Load environment variables
         load_dotenv()
         
-        # Debug print (remove after testing)
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key and api_key.startswith("sk-"):
-            print(f"API key loaded successfully: {api_key[:10]}...")
-        else:
-            print(f"Warning: API key not found or invalid format: {api_key[:10] if api_key else 'None'}")
+        # Initialize Pinecone with environment
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         
         # Initialize embeddings
         self.embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
         
-        # Initialize stores with updated Chroma import
-        self.text_vectorstore = Chroma(
-            collection_name="text_store",
-            embedding_function=self.embeddings,
-            persist_directory=persist_directory
-        )
-        self.table_vectorstore = Chroma(
-            collection_name="table_store",
-            embedding_function=self.embeddings,
-            persist_directory=persist_directory
-        )
-        self.image_vectorstore = Chroma(
-            collection_name="image_store",
-            embedding_function=self.embeddings,
-            persist_directory=persist_directory
+        # Use a single index with namespaces
+        self.index_name = os.getenv("PINECONE_INDEX_NAME", "multimodal-store")
+        
+        try:
+            # Try to get existing index
+            self.index = pc.Index(self.index_name)
+            print(f"Found existing {self.index_name} index")
+        except Exception as e:
+            print(f"Creating new {self.index_name} index...")
+            # Create new index if it doesn't exist
+            self.index = pc.create_index(
+                name=self.index_name,
+                dimension=1536,  # OpenAI embedding dimension
+                metric="cosine",
+                spec=ServerlessSpec(
+                    cloud="aws",
+                    region="us-east-1"
+                )
+            )
+        
+        # Initialize vector store with namespaces and index name
+        self.vectorstore = PineconeVectorStore(
+            index=self.index,
+            embedding=self.embeddings,
+            text_key="text",
+            index_name=self.index_name
         )
         
         # Initialize document stores
@@ -172,17 +180,14 @@ class MultimodalRetriever:
             texts, images, tables = extract_pdf_elements(file_path)
             
             # Limit to first 20 texts for development
-            texts = texts[:20]  # Take only first 20 texts
+            texts = texts[:20]
             print(f"Using first {len(texts)} text sections for development...")
             
             # Generate summaries
             print("Generating summaries...")
             text_summaries = summarize_texts(texts)
-            print("Text summaries generated.")
             table_summaries = summarize_tables(tables)
-            print("Table summaries generated.")
             image_summaries = summarize_images([img['content'] for img in images])
-            print("Image summaries generated.")
             
             # Prepare documents
             print("Preparing documents...")
@@ -190,15 +195,36 @@ class MultimodalRetriever:
             table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
             image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
             
-            print(f"Processing {len(texts)} texts, {len(tables)} tables, {len(images)} images...")
+            # Clear existing vectors if any
+            print("Clearing existing vectors...")
+            try:
+                # Try to delete vectors from each namespace separately
+                for namespace in ["text", "table", "image"]:
+                    try:
+                        self.index.delete(delete_all=True, namespace=namespace)
+                        print(f"Cleared vectors from {namespace} namespace")
+                    except Exception as e:
+                        print(f"No existing vectors in {namespace} namespace")
+            except Exception as e:
+                print("No existing vectors to clear")
             
-            # Add documents to vector stores
-            print("Adding documents to text vector store...")
-            self.text_vectorstore.add_documents(text_docs)
-            print("Adding documents to table vector store...")
-            self.table_vectorstore.add_documents(table_docs)
-            print("Adding documents to image vector store...")
-            self.image_vectorstore.add_documents(image_docs)
+            # Add documents to vector store with batching and namespaces
+            batch_size = 100
+            
+            print("Adding documents to text namespace...")
+            for i in range(0, len(text_docs), batch_size):
+                batch = text_docs[i:i + batch_size]
+                self.vectorstore.add_documents(batch, namespace="text")
+            
+            print("Adding documents to table namespace...")
+            for i in range(0, len(table_docs), batch_size):
+                batch = table_docs[i:i + batch_size]
+                self.vectorstore.add_documents(batch, namespace="table")
+            
+            print("Adding documents to image namespace...")
+            for i in range(0, len(image_docs), batch_size):
+                batch = image_docs[i:i + batch_size]
+                self.vectorstore.add_documents(batch, namespace="image")
             
             # Store original documents
             print("Storing original documents...")
@@ -208,6 +234,7 @@ class MultimodalRetriever:
             
             print("Vector stores initialized successfully!")
             return True
+            
         except Exception as e:
             print(f"Error in initialize_vectorstores: {str(e)}")
             raise e
@@ -215,21 +242,36 @@ class MultimodalRetriever:
     @lru_cache(maxsize=100)
     def retrieve(self, query, k=2):
         """Retrieve relevant content with caching"""
-        results = {
-            "texts": self.text_vectorstore.similarity_search(query, k=k),
-            "tables": self.table_vectorstore.similarity_search(query, k=k),
-            "images": self.image_vectorstore.similarity_search(query, k=k)
-        }
-        
-        # Display retrieved images
-        print("\nRetrieved Images:")
-        for img_doc in results["images"]:
-            print(f"\nImage Summary: {img_doc.metadata['summary']}")
-            print(f"Caption: {img_doc.metadata['caption']}")
-            if os.path.exists(img_doc.metadata['filepath']):
-                display_saved_image(img_doc.metadata['filepath'])
+        try:
+            results = {
+                "texts": self.vectorstore.similarity_search(
+                    query, k=k, namespace="text"
+                ),
+                "tables": self.vectorstore.similarity_search(
+                    query, k=k, namespace="table"
+                ),
+                "images": self.vectorstore.similarity_search(
+                    query, k=k, namespace="image"
+                )
+            }
             
-        return results
+            # Display retrieved images
+            print("\nRetrieved Images:")
+            for img_doc in results["images"]:
+                print(f"\nImage Summary: {img_doc.metadata['summary']}")
+                print(f"Caption: {img_doc.metadata['caption']}")
+                if os.path.exists(img_doc.metadata['filepath']):
+                    display_saved_image(img_doc.metadata['filepath'])
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error during retrieval: {str(e)}")
+            return {
+                "texts": [],
+                "tables": [],
+                "images": []
+            }
     
     def generate_response(self, query, retrieved_content):
         """Generate response using retrieved content and summaries"""

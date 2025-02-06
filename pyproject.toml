@@ -25,6 +25,8 @@ pypdf = "^5.2.0"
 pymupdf = "^1.25.2"
 pandas = "^2.2.3"
 langchain-chroma = "^0.2.1"
+langchain-pinecone = "^0.2.2"
+pinecone = "^5.4.2"
 
 
 
