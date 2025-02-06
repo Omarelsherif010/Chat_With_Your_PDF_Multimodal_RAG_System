@@ -24,6 +24,7 @@ pytesseract = "^0.3.13"
 pypdf = "^5.2.0"
 pymupdf = "^1.25.2"
 pandas = "^2.2.3"
+langchain-chroma = "^0.2.1"
 
 
 
