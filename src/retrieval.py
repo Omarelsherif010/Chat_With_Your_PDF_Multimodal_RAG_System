@@ -79,98 +79,143 @@ class MultimodalRetriever:
         # Initialize LLM for response generation
         self.llm = ChatOpenAI(model="gpt-4o-mini-2024-07-18", temperature=0.7)
         
-        # Add metadata filters for better retrieval
+        # Update retrieval filters to use 'type' instead of 'section_type'
         self.retrieval_filters = {
-            "text": lambda x: x["type"] == "text",
-            "equation": lambda x: "equation" in x["section_type"].lower(),
-            "technical": lambda x: any(term in x["content"].lower() 
+            "text": lambda x: x.get("type") == "text",
+            "equation": lambda x: x.get("type") == "equation",
+            "technical": lambda x: any(term in x.get("content", "").lower() 
                                     for term in ["algorithm", "formula", "equation", "implementation"])
         }
 
     def prepare_text_documents(self, texts, summaries):
-        """Prepare text documents with their summaries"""
-        documents = []
-        doc_ids = []
+        """Prepare text documents for vector store"""
+        docs = []
+        ids = []
+        originals = []
         
         for text, summary in zip(texts, summaries):
-            doc_id = str(uuid.uuid4())
-            doc_ids.append(doc_id)
-            
-            metadata = {
-                "doc_id": doc_id,
-                "type": "text",
-                "section_type": text["metadata"]["type"],
-                "page": text["metadata"]["page"],
-                "summary": summary
-            }
-            
-            chunks = self.text_splitter.split_text(text["content"])
-            for chunk in chunks:
-                documents.append(
-                    Document(
-                        page_content=chunk,
-                        metadata=metadata
-                    )
+            try:
+                # Generate unique ID
+                doc_id = str(uuid.uuid4())
+                
+                # Convert position coordinates to list of strings and handle bbox
+                position = text['metadata'].get('position', [0,0,0,0])
+                if isinstance(position, (list, tuple)):
+                    position = [str(round(float(coord), 2)) for coord in position]  # Round floats
+                else:
+                    position = ['0', '0', '0', '0']
+                
+                # Create document with complete metadata
+                doc = Document(
+                    page_content=text['content'],
+                    metadata={
+                        'id': doc_id,
+                        'type': text['metadata'].get('type', 'text'),
+                        'page': int(text['metadata'].get('page', 0)),  # Ensure integer
+                        'summary': summary,
+                        'font_size': float(text['metadata'].get('font_size', 0)),  # Ensure float
+                        'position': position  # List of string coordinates
+                    }
                 )
+                
+                docs.append(doc)
+                ids.append(doc_id)
+                originals.append({
+                    'content': text['content'],
+                    'metadata': text['metadata']
+                })
+                
+            except Exception as e:
+                print(f"Error preparing text document: {str(e)}")
+                continue
         
-        return documents, doc_ids, texts
+        return docs, ids, originals
     
     def prepare_table_documents(self, tables, summaries):
-        """Prepare table documents with their summaries"""
-        documents = []
-        doc_ids = []
+        """Prepare table documents for vector store"""
+        docs = []
+        ids = []
+        originals = []
         
-        for table, summary in zip(tables, summaries):
-            doc_id = str(uuid.uuid4())
-            doc_ids.append(doc_id)
-            
-            metadata = {
-                "doc_id": doc_id,
-                "type": "table",
-                "page": table["metadata"]["page"],
-                "caption": table["metadata"].get("caption", "No caption"),
-                "summary": summary
-            }
-            
-            documents.append(
-                Document(
-                    page_content=table["content"]["text"],
-                    metadata=metadata
+        for i, (table, summary) in enumerate(zip(tables, summaries)):
+            try:
+                # Generate unique ID
+                doc_id = str(uuid.uuid4())
+                
+                # Convert bbox to list of strings
+                bbox = table.get('bbox', [0,0,0,0])
+                if isinstance(bbox, (list, tuple)):
+                    bbox = [str(round(float(coord), 2)) for coord in bbox]
+                else:
+                    bbox = ['0', '0', '0', '0']
+                
+                # Create document
+                doc = Document(
+                    page_content=table.get('text', ''),
+                    metadata={
+                        'id': doc_id,
+                        'type': 'table',
+                        'page': int(table['metadata'].get('page', 0)),
+                        'caption': table['metadata'].get('caption', 'No caption'),
+                        'summary': summary,
+                        'rows': int(table['metadata'].get('rows', 0)),
+                        'columns': int(table['metadata'].get('columns', 0)),
+                        'bbox': bbox
+                    }
                 )
-            )
+                
+                docs.append(doc)
+                ids.append(doc_id)
+                originals.append({
+                    'content': table.get('content', []),
+                    'metadata': table['metadata']
+                })
+                
+            except Exception as e:
+                print(f"Error preparing table document: {str(e)}")
+                continue
         
-        return documents, doc_ids, tables
+        return docs, ids, originals
     
     def prepare_image_documents(self, images, summaries):
-        """Prepare image documents with their summaries"""
-        documents = []
-        doc_ids = []
+        """Prepare image documents for vector store"""
+        docs = []
+        ids = []
+        originals = []
         
         for image, summary in zip(images, summaries):
-            doc_id = str(uuid.uuid4())
-            doc_ids.append(doc_id)
-            
-            metadata = {
-                "doc_id": doc_id,
-                "type": "image",
-                "page": image["metadata"]["page"],
-                "caption": image["metadata"].get("caption", "No caption"),
-                "filename": image["metadata"]["filename"],
-                "filepath": os.path.join(output_path, image["metadata"]["filename"]),
-                "summary": summary
-            }
-            
-            content = f"""Image caption: {image['metadata'].get('caption', 'No caption')}
-                         Summary: {summary}"""
-            
-            documents.append(
-                Document(
-                    page_content=content,
-                    metadata=metadata
+            try:
+                # Generate unique ID
+                doc_id = str(uuid.uuid4())
+                
+                # Save image path
+                image_path = os.path.join(output_path, image['metadata']['filename'])
+                
+                # Create document
+                doc = Document(
+                    page_content=summary,  # Use summary as content for embedding
+                    metadata={
+                        'id': doc_id,
+                        'type': 'image',
+                        'page': image['metadata']['page'],
+                        'caption': image['metadata'].get('caption', 'No caption'),
+                        'summary': summary,
+                        'filepath': image_path
+                    }
                 )
-            )
+                
+                docs.append(doc)
+                ids.append(doc_id)
+                originals.append({
+                    'content': image['content'],
+                    'metadata': image['metadata']
+                })
+                
+            except Exception as e:
+                print(f"Error preparing image document: {str(e)}")
+                continue
         
-        return documents, doc_ids, images
+        return docs, ids, originals
     
     def initialize_vectorstores(self):
         """Initialize vector stores with content and summaries"""
@@ -179,15 +224,18 @@ class MultimodalRetriever:
             print("Extracting PDF elements...")
             texts, images, tables = extract_pdf_elements(file_path)
             
+            if not texts and not images and not tables:
+                raise ValueError("No content extracted from PDF")
+            
             # Limit to first 20 texts for development
             texts = texts[:20]
             print(f"Using first {len(texts)} text sections for development...")
             
-            # Generate summaries
+            # Generate summaries with progress tracking
             print("Generating summaries...")
-            text_summaries = summarize_texts(texts)
-            table_summaries = summarize_tables(tables)
-            image_summaries = summarize_images([img['content'] for img in images])
+            text_summaries = summarize_texts(texts) if texts else []
+            table_summaries = summarize_tables(tables) if tables else []
+            image_summaries = summarize_images([img['content'] for img in images]) if images else []
             
             # Prepare documents
             print("Preparing documents...")
@@ -195,49 +243,43 @@ class MultimodalRetriever:
             table_docs, table_ids, table_originals = self.prepare_table_documents(tables, table_summaries)
             image_docs, image_ids, image_originals = self.prepare_image_documents(images, image_summaries)
             
-            # Clear existing vectors if any
+            # Clear existing vectors
             print("Clearing existing vectors...")
-            try:
-                # Try to delete vectors from each namespace separately
-                for namespace in ["text", "table", "image"]:
-                    try:
-                        self.index.delete(delete_all=True, namespace=namespace)
-                        print(f"Cleared vectors from {namespace} namespace")
-                    except Exception as e:
-                        print(f"No existing vectors in {namespace} namespace")
-            except Exception as e:
-                print("No existing vectors to clear")
+            for namespace in ["text", "table", "image"]:
+                try:
+                    self.index.delete(delete_all=True, namespace=namespace)
+                    print(f"Cleared vectors from {namespace} namespace")
+                except Exception as e:
+                    print(f"No existing vectors in {namespace} namespace")
             
-            # Add documents to vector store with batching and namespaces
+            # Add documents in batches
             batch_size = 100
+            for namespace, docs in [
+                ("text", text_docs),
+                ("table", table_docs),
+                ("image", image_docs)
+            ]:
+                if docs:
+                    print(f"Adding documents to {namespace} namespace...")
+                    for i in range(0, len(docs), batch_size):
+                        batch = docs[i:i + batch_size]
+                        self.vectorstore.add_documents(batch, namespace=namespace)
             
-            print("Adding documents to text namespace...")
-            for i in range(0, len(text_docs), batch_size):
-                batch = text_docs[i:i + batch_size]
-                self.vectorstore.add_documents(batch, namespace="text")
-            
-            print("Adding documents to table namespace...")
-            for i in range(0, len(table_docs), batch_size):
-                batch = table_docs[i:i + batch_size]
-                self.vectorstore.add_documents(batch, namespace="table")
-            
-            print("Adding documents to image namespace...")
-            for i in range(0, len(image_docs), batch_size):
-                batch = image_docs[i:i + batch_size]
-                self.vectorstore.add_documents(batch, namespace="image")
-            
-            # Store original documents
+            # Store originals
             print("Storing original documents...")
-            self.text_store.mset(list(zip(text_ids, text_originals)))
-            self.table_store.mset(list(zip(table_ids, table_originals)))
-            self.image_store.mset(list(zip(image_ids, image_originals)))
+            if text_originals:
+                self.text_store.mset(list(zip(text_ids, text_originals)))
+            if table_originals:
+                self.table_store.mset(list(zip(table_ids, table_originals)))
+            if image_originals:
+                self.image_store.mset(list(zip(image_ids, image_originals)))
             
             print("Vector stores initialized successfully!")
             return True
             
         except Exception as e:
             print(f"Error in initialize_vectorstores: {str(e)}")
-            raise e
+            raise
     
     @lru_cache(maxsize=100)
     def retrieve(self, query, k=2):
@@ -245,7 +287,8 @@ class MultimodalRetriever:
         try:
             results = {
                 "texts": self.vectorstore.similarity_search(
-                    query, k=k, namespace="text"
+                    query, k=k, namespace="text",
+                    filter={"type": {"$in": ["text", "title", "heading", "paragraph"]}}  # Add type filter
                 ),
                 "tables": self.vectorstore.similarity_search(
                     query, k=k, namespace="table"
@@ -275,61 +318,80 @@ class MultimodalRetriever:
     
     def generate_response(self, query, retrieved_content):
         """Generate response using retrieved content and summaries"""
-        prompt_template = """You are an AI assistant helping with questions about a research paper on transformers.
-        Use the following retrieved content to answer the question. Include relevant information from texts, tables, 
-        and images if available.
+        try:
+            prompt_template = """You are an AI assistant helping with questions about a research paper on transformers.
+            Use the following retrieved content to answer the question. Include relevant information from texts, tables, 
+            and images if available.
 
-        Retrieved Text Sections:
-        {text_sections}
-        
-        Text Summaries:
-        {text_summaries}
+            Retrieved Text Sections:
+            {text_sections}
+            
+            Text Summaries:
+            {text_summaries}
 
-        Retrieved Tables:
-        {tables}
-        
-        Table Summaries:
-        {table_summaries}
+            Retrieved Tables:
+            {tables}
+            
+            Table Summaries:
+            {table_summaries}
 
-        Retrieved Images:
-        {images}
-        
-        Image Summaries:
-        {image_summaries}
+            Retrieved Images:
+            {images}
+            
+            Image Summaries:
+            {image_summaries}
 
-        Question: {query}
+            Question: {query}
 
-        Provide a comprehensive answer using the retrieved information. If referring to images or tables, 
-        be specific about which ones you're referencing. Use the summaries to provide context but rely on 
-        the full content for detailed information.
-        """
-        
-        # Format retrieved content with summaries
-        text_sections = "\n".join([f"- {doc.page_content}" for doc in retrieved_content["texts"]])
-        text_summaries = "\n".join([f"- {doc.metadata['summary']}" for doc in retrieved_content["texts"]])
-        
-        tables = "\n".join([f"- {doc.page_content}" for doc in retrieved_content["tables"]])
-        table_summaries = "\n".join([f"- {doc.metadata['summary']}" for doc in retrieved_content["tables"]])
-        
-        images = "\n".join([f"- {doc.page_content}" for doc in retrieved_content["images"]])
-        image_summaries = "\n".join([f"- {doc.metadata['summary']}" for doc in retrieved_content["images"]])
-        
-        # Create prompt
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        
-        # Generate response
-        chain = prompt | self.llm | StrOutputParser()
-        response = chain.invoke({
-            "text_sections": text_sections,
-            "text_summaries": text_summaries,
-            "tables": tables,
-            "table_summaries": table_summaries,
-            "images": images,
-            "image_summaries": image_summaries,
-            "query": query
-        })
-        
-        return response
+            Provide a comprehensive answer using the retrieved information. If referring to images or tables, 
+            be specific about which ones you're referencing. Use the summaries to provide context but rely on 
+            the full content for detailed information.
+            """
+            
+            # Format retrieved content with summaries - with safe access and type checking
+            text_sections = "\n".join([
+                f"- [{doc.metadata.get('type', 'text')}] {doc.page_content}" 
+                for doc in retrieved_content.get("texts", [])
+            ])
+            text_summaries = "\n".join([
+                f"- [{doc.metadata.get('type', 'text')}] {doc.metadata.get('summary', '')}" 
+                for doc in retrieved_content.get("texts", [])
+            ])
+            
+            tables = "\n".join([
+                f"- {doc.page_content}" for doc in retrieved_content.get("tables", [])
+            ])
+            table_summaries = "\n".join([
+                f"- {doc.metadata.get('summary', '')}" for doc in retrieved_content.get("tables", [])
+            ])
+            
+            images = "\n".join([
+                f"- {doc.page_content}" for doc in retrieved_content.get("images", [])
+            ])
+            image_summaries = "\n".join([
+                f"- {doc.metadata.get('summary', '')}" for doc in retrieved_content.get("images", [])
+            ])
+            
+            # Create prompt
+            prompt = ChatPromptTemplate.from_template(prompt_template)
+            
+            # Generate response
+            chain = prompt | self.llm | StrOutputParser()
+            response = chain.invoke({
+                "text_sections": text_sections or "No relevant text sections found.",
+                "text_summaries": text_summaries or "No text summaries available.",
+                "tables": tables or "No relevant tables found.",
+                "table_summaries": table_summaries or "No table summaries available.",
+                "images": images or "No relevant images found.",
+                "image_summaries": image_summaries or "No image summaries available.",
+                "query": query
+            })
+            
+            return response
+            
+        except Exception as e:
+            print(f"Error generating response: {str(e)}")
+            return "I apologize, but I encountered an error while generating the response. Please try again."
 
 def main():
     # Initialize retriever

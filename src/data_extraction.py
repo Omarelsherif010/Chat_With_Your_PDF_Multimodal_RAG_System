@@ -6,6 +6,8 @@ import io
 import re
 import base64
 from dotenv import load_dotenv
+import camelot
+import numpy as np
 
 # # Load environment variables from .env file
 load_dotenv()
@@ -84,15 +86,9 @@ def extract_pdf_elements(file_path):
                     })
         
         # Improved table detection
-        tables_on_page = detect_tables(page)
+        tables_on_page = extract_tables(page)
         for table in tables_on_page:
-            tables.append({
-                'content': table,
-                'metadata': {
-                    'page': page_num + 1,
-                    'position': table['bbox'] if 'bbox' in table else None
-                }
-            })
+            tables.append(table)
         
         # Extract images with captions and save them
         # Get both normal images and mask images
@@ -153,32 +149,180 @@ def extract_pdf_elements(file_path):
     
     return texts, unique_images, tables
 
-def detect_tables(page):
-    """Detect tables using layout analysis"""
+def extract_tables(page):
+    """Extract tables from a page using camelot"""
     tables = []
-    words = page.get_text("words")
+    doc = fitz.open(file_path)  # We need this for caption detection
     
-    # Simple table detection based on word alignment
-    # This is a basic implementation - you might want to enhance it
-    table_candidates = []
-    for word in words:
-        if word[4].lower().startswith(("table")):
-            table_candidates.append(word)
-    
-    # Extract tabular data near table captions
-    for candidate in table_candidates:
-        table_data = extract_tabular_data(page, candidate[0:4])
-        if table_data:
-            tables.append(table_data)
+    try:
+        # Extract tables from the current page
+        page_num = page.number + 1
+        # Try both lattice and stream modes
+        table_list = []
+        try:
+            # First try lattice mode for tables with visible lines
+            lattice_tables = camelot.read_pdf(
+                file_path,
+                pages=str(page_num),
+                flavor='lattice',
+                line_scale=40  # Adjust line detection sensitivity
+            )
+            if len(lattice_tables) > 0:
+                table_list.extend(lattice_tables)
+        except Exception as e:
+            print(f"Lattice mode failed on page {page_num}: {str(e)}")
+            
+        if not table_list:  # Only try stream if lattice found nothing
+            try:
+                # Then try stream mode for tables without visible lines
+                stream_tables = camelot.read_pdf(
+                    file_path,
+                    pages=str(page_num),
+                    flavor='stream',
+                    edge_tol=500  # Increase tolerance for table edges
+                )
+                table_list.extend(stream_tables)
+            except Exception as e:
+                print(f"Stream mode failed on page {page_num}: {str(e)}")
+        
+        # Process each table found
+        for table_idx, table in enumerate(table_list):
+            try:
+                # Get DataFrame
+                df = table.df
+                
+                # Clean and format the table
+                df = clean_dataframe(df)
+                
+                # Skip empty or tiny tables
+                if df.empty or df.size < 4:
+                    continue
+                    
+                # Skip tables with low accuracy or high whitespace
+                if table.accuracy < 80 or table.whitespace > 50:
+                    continue
+                
+                # Convert DataFrame to formatted text
+                table_text = format_dataframe(df)
+                
+                # Get table bounds from camelot
+                bbox = table._bbox
+                
+                # Create table data structure
+                table_data = {
+                    'content': df.values.tolist(),  # Store as list of lists
+                    'text': table_text,
+                    'bbox': bbox,
+                    'metadata': {
+                        'page': page_num,
+                        'type': 'table',
+                        'rows': len(df),
+                        'columns': len(df.columns),
+                        'headers': df.columns.tolist(),
+                        'accuracy': table.accuracy,
+                        'whitespace': table.whitespace
+                    }
+                }
+                
+                # Look for caption
+                caption = find_table_caption(doc[page_num-1], bbox)
+                if caption:
+                    table_data['metadata']['caption'] = caption
+                
+                tables.append(table_data)
+                
+            except Exception as e:
+                print(f"Error processing table {table_idx} on page {page_num}: {str(e)}")
+                continue
+                
+    except Exception as e:
+        print(f"Error extracting tables from page {page.number + 1}: {str(e)}")
     
     return tables
 
-def extract_tabular_data(page, bbox):
-    """Extract tabular data from a given region"""
-    # Basic table extraction - can be enhanced
-    table_text = page.get_text("text", clip=bbox)
-    # Convert text to structured data (simplified)
-    return {'text': table_text, 'bbox': bbox}
+def clean_dataframe(df):
+    """Clean and format the DataFrame"""
+    # Remove empty rows and columns
+    df = df.dropna(how='all').dropna(axis=1, how='all')
+    
+    # Replace NaN with empty string
+    df = df.fillna('')
+    
+    # Clean cell values - using map instead of deprecated applymap
+    df = df.map(lambda x: str(x).strip())
+    
+    # If first row looks like headers, use it
+    if len(df) > 0 and df.iloc[0].notna().all():  # Fixed ambiguous truth value
+        df.columns = df.iloc[0]
+        df = df.iloc[1:].reset_index(drop=True)
+    
+    return df
+
+def format_dataframe(df):
+    """Convert DataFrame to formatted text"""
+    # Calculate column widths
+    col_widths = [max(df[col].astype(str).map(len).max(), len(str(col))) 
+                  for col in df.columns]
+    
+    # Format headers
+    headers = [str(col).ljust(width) for col, width in zip(df.columns, col_widths)]
+    rows = [" | ".join(headers)]
+    
+    # Add separator
+    separator = "-" * len(rows[0])
+    rows.append(separator)
+    
+    # Format data rows
+    for _, row in df.iterrows():
+        formatted_row = [str(val).ljust(width) 
+                        for val, width in zip(row, col_widths)]
+        rows.append(" | ".join(formatted_row))
+    
+    return "\n".join(rows)
+
+def get_table_bbox(page, table_idx):
+    """Get approximate bounding box for table"""
+    # This is a rough estimation - you might need to adjust based on your PDFs
+    page_height = page.rect.height
+    page_width = page.rect.width
+    
+    # Divide page into sections based on number of tables found
+    section_height = page_height / 4  # Assume max 4 tables per page
+    top = section_height * table_idx
+    bottom = top + section_height
+    
+    return [0, top, page_width, bottom]
+
+def find_table_caption(page, table_bbox):
+    """Find caption near table location"""
+    caption_text = ""
+    blocks = page.get_text("dict")["blocks"]
+    
+    # Look for text blocks near the table
+    for block in blocks:
+        if block["type"] == 0:  # Text block
+            text = " ".join([span["text"] for line in block.get("lines", []) 
+                           for span in line.get("spans", [])])
+            
+            # Look for table captions or references
+            if any(text.lower().startswith(prefix) for prefix in ["table", "tbl", "tab."]):
+                # Check if text is near table
+                if is_near_bbox(block["bbox"], table_bbox, threshold=50):
+                    caption_text = text
+                    break
+    
+    return caption_text or "No caption"
+
+def is_near_bbox(bbox1, bbox2, threshold=50):
+    """Check if two bounding boxes are near each other"""
+    x1, y1, x2, y2 = bbox1
+    x3, y3, x4, y4 = bbox2
+    
+    # Check vertical and horizontal distance
+    vertical_dist = min(abs(y2 - y3), abs(y1 - y4))
+    horizontal_dist = min(abs(x2 - x3), abs(x1 - x4))
+    
+    return vertical_dist < threshold and horizontal_dist < threshold
 
 def find_nearby_caption(texts, page_num, img_index):
     """Find image caption by looking for nearby text starting with 'Figure'"""

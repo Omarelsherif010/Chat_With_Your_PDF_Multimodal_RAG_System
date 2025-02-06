@@ -70,13 +70,36 @@ def summarize_texts(texts):
     return process_with_rate_limit(text_contents, process_batch)
 
 def summarize_tables(tables):
-    """Summarize table sections with rate limiting."""
-    table_contents = [table['content']['text'] for table in tables]
+    """Summarize table content with improved context"""
+    summaries = []
     
-    def process_batch(batch):
-        return summarize_chain.batch(batch, {"max_concurrency": 1})
-    
-    return process_with_rate_limit(table_contents, process_batch)
+    for table in tables:
+        if not table.get('text', '').strip():
+            summaries.append("Empty table")
+            continue
+            
+        # Create prompt with table context
+        prompt = f"""Summarize the following table content. Include:
+        1. The type of data presented
+        2. Number of rows ({table['metadata'].get('rows', 'unknown')}) and columns ({table['metadata'].get('columns', 'unknown')})
+        3. Column headers: {', '.join(table['metadata'].get('headers', []))}
+        4. Key patterns or insights
+        5. Any relevant context from caption
+        
+        Table Caption: {table['metadata'].get('caption', 'No caption')}
+        Table Content:
+        {table['text']}
+        
+        Summary:"""
+        
+        try:
+            summary = summarize_chain.invoke(prompt)
+            summaries.append(summary)
+        except Exception as e:
+            print(f"Error summarizing table: {str(e)}")
+            summaries.append("Error generating summary")
+            
+    return summaries
 
 def summarize_images(images):
     """Summarize images with rate limiting."""
