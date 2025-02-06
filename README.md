@@ -25,6 +25,29 @@ This project is a multimodal RAG system that ingests data containing images, tex
 3. Model Enhancements (expected output: document or PPT)
    - Mention the challenges in the current system and how Agentic RAG can solve it.
 
+## Libraries Used
+
+The project utilizes several libraries to facilitate multimodal data processing and retrieval:
+
+- **tiktoken**: Used for tokenization of text data.
+- **pillow**: A library for image processing.
+- **lxml**: Utilized for parsing XML and HTML documents.
+- **chromadb**: A database for storing and retrieving vector embeddings.
+- **langchain**: Provides tools for building language models and chains.
+- **python-dotenv**: Loads environment variables from a `.env` file.
+- **pdf2image**: Converts PDF files into images.
+- **pytesseract**: Optical Character Recognition (OCR) tool for extracting text from images.
+- **pymupdf**: Another library for PDF processing.
+
+## System Structure
+
+The multimodal RAG system is structured as follows:
+
+- **Data Ingestion**: Extracts text, images, and tables from the PDF document. This is handled by the `src/data_extraction.py` script.
+- **Data Summarization**: Summarizes the extracted data to create a concise representation, implemented in `src/data_summarize.py`.
+- **Retrieval Mechanism**: Uses vector stores to retrieve relevant information based on user queries, as seen in `src/retrieval.py`.
+- **Main Application**: The main script `src/main.py` initializes the RAG system and handles user interactions.
+
 ## Installation
 
 To set up the project locally, follow these steps:
@@ -45,6 +68,7 @@ To set up the project locally, follow these steps:
 ## Usage
 
 To run the system, execute the main script:
+
 ```bash
 poetry run python src/main.py
 ```
