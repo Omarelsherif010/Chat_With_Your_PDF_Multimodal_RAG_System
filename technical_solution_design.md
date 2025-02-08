@@ -16,11 +16,15 @@ The architecture of the multimodal RAG system is divided into several key compon
    - **Purpose**: Summarizes the extracted data to create a concise representation.
    - **Implementation**: Implemented in `src/data_summarize.py` using language models to generate summaries for text, tables, and images.
 
-3. **Vector Store and Retrieval**:
+3. **Chunking and Retrieval**:
+   - **Purpose**: Breaks down large text sections into manageable chunks and retrieves relevant information based on user queries.
+   - **Implementation**: Utilizes a `RecursiveCharacterTextSplitter` to divide text into smaller, contextually meaningful chunks. This improves retrieval precision by ensuring that each chunk is a coherent unit of information. The retrieval process is managed by Pinecone, which uses vector embeddings to find the most relevant chunks for a given query.
+
+4. **Vector Store and Retrieval**:
    - **Purpose**: Stores vector embeddings and retrieves relevant information based on user queries.
    - **Implementation**: Utilizes Pinecone for vector storage and retrieval, as seen in `src/retrieval.py`. The system uses OpenAI embeddings for text and image data.
 
-4. **Main Application**:
+5. **Main Application**:
    - **Purpose**: Initializes the RAG system and handles user interactions.
    - **Implementation**: The main script `src/main.py` orchestrates the initialization and query handling processes.
 
@@ -46,11 +50,24 @@ The architecture of the multimodal RAG system is divided into several key compon
    - **Purpose**: Web interface for user interaction.
    - **Justification**: Allows for rapid development of interactive web applications, making it ideal for prototyping and deployment.
 
-## Justification of Choices
+## Comparison of Data Ingestion Options
 
-- **Scalability**: The use of Pinecone and OpenAI ensures that the system can handle large datasets and complex queries efficiently.
-- **Flexibility**: The modular design allows for easy integration of additional data types or processing steps.
-- **Performance**: Leveraging state-of-the-art models and efficient libraries ensures high performance in data processing and retrieval tasks.
+- **Unstructured Library**: Faced installation issues on Windows due to dependencies like `onnx`, making it unsuitable for this project.
+- **llama_parse**: Successfully extracted text but required further debugging for tables and images, making it partially suitable.
+- **PyMuPDF, PIL, and Custom Functions**: Provided a reliable and flexible solution for extracting text, images, and tables, making it the most suitable choice for this project.
+
+## Comparison of ChromaDB and Pinecone
+
+- **Performance**: Pinecone provides consistently fast query times, especially with large datasets.
+- **Scalability**: Pinecone scales seamlessly, handling millions of vectors efficiently.
+- **Integration**: Pinecone integrates smoothly with OpenAI and Langchain, reducing implementation complexity.
+- **Ease of Use**: Pinecone's managed service reduces infrastructure management overhead.
+
+## Justification for Choosing Pinecone
+
+- **Scalability and Performance**: Essential for handling complex multimodal data efficiently.
+- **Integration**: Simplifies the use of existing tools and frameworks.
+- **Consistent Performance**: Ensures reliable and accurate query responses.
 
 ## Conclusion
 
