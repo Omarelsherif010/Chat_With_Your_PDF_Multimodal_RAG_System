@@ -4,6 +4,10 @@
 
 This project is a multimodal RAG system that ingests data containing images, text, and tables from the well-known paper “Attention Is All You Need”. The system should be able to retrieve relevant information and reason over the multimodal data to answer user queries.
 
+## Architecture Diagram
+
+![Architecture Diagram](Architecture\diagram-export-2-9-2025-11_48_20-PM.png)
+
 ## Technical Solution Design
 
 1. Technical Solution Design (expected output: technical design document or PPT)
@@ -29,21 +33,44 @@ This project is a multimodal RAG system that ingests data containing images, tex
 
 The project utilizes several libraries to facilitate multimodal data processing and retrieval:
 
-- **tiktoken**: Used for tokenization of text data.
-- **pillow**: A library for image processing.
-- **lxml**: Utilized for parsing XML and HTML documents.
-- **chromadb**: A database for storing and retrieving vector embeddings.
-- **langchain**: Provides tools for building language models and chains.
-- **python-dotenv**: Loads environment variables from a `.env` file.
-- **pdf2image**: Converts PDF files into images.
-- **pytesseract**: Optical Character Recognition (OCR) tool for extracting text from images.
-- **pymupdf**: Another library for PDF processing.
+- **Python**: The core programming language used for developing the system.
+- **tiktoken**: Used for tokenizing text data, essential for processing and analyzing text.
+- **pillow**: A library for image processing, used to handle image data extracted from PDFs.
+- **lxml**: Utilized for parsing XML and HTML documents, aiding in data extraction.
+- **chromadb**: A database for storing and retrieving vector embeddings, crucial for efficient data retrieval.
+- **langchain**: Provides tools for building language models and chains, facilitating natural language processing tasks.
+- **langchain-community**: Community-driven extensions and tools for LangChain.
+- **langchain-openai**: Integrates OpenAI models with LangChain for advanced language processing.
+- **langchain-groq**: Offers Groq-based optimizations for LangChain models.
+- **python-dotenv**: Loads environment variables from a `.env` file, simplifying configuration management.
+- **python-magic-bin**: Used for file type identification, aiding in data processing.
+- **langchain-unstructured**: Handles unstructured data within LangChain workflows.
+- **unstructured**: Provides tools for processing unstructured data, with PDF support.
+- **pdf2image**: Converts PDF files into images, enabling image extraction from documents.
+- **pytesseract**: An OCR tool for extracting text from images, useful for processing scanned documents.
+- **pypdf**: A library for reading and manipulating PDF files.
+- **pymupdf**: Another library for PDF processing, used for extracting images and text.
+- **pandas**: A data manipulation library, used for handling tabular data.
+- **langchain-chroma**: Integrates Chroma with LangChain for enhanced color processing.
+- **langchain-pinecone**: Connects Pinecone vector databases with LangChain for efficient data retrieval.
+- **pinecone**: A vector database for storing and querying embeddings.
+- **tabula-py**: Extracts tables from PDFs into DataFrames, facilitating data analysis.
+- **jpype1**: A bridge between Python and Java, used by Tabula for PDF processing.
+- **llama-parse**: A library for parsing and extracting data from documents.
+- **llama-index**: Provides indexing capabilities for LlamaParse outputs.
+- **transformers**: A library for state-of-the-art natural language processing models.
+- **torch**: A machine learning library, used for building and training models.
+- **pydantic**: Provides data validation and settings management using Python type annotations.
+- **pydantic-settings**: Extends Pydantic for managing application settings.
+- **ragas**: A library for RAG (Retrieval-Augmented Generation) systems.
+- **nltk**: A natural language processing library, used for text analysis and processing.
+- **rouge-score**: A library for evaluating text summarization and translation quality.
 
 ## System Structure
 
 The multimodal RAG system is structured as follows:
 
-- **Data Ingestion**: Extracts text, images, and tables from the PDF document. This is handled by the `src/data_extraction.py` script.
+- **Data Ingestion**: Extracts text, images, and tables from the PDF document. This is handled by the `src/data_extraction_llama_parse.py` script.
 - **Data Summarization**: Summarizes the extracted data to create a concise representation, implemented in `src/data_summarize.py`.
 - **Retrieval Mechanism**: Uses vector stores to retrieve relevant information based on user queries, as seen in `src/retrieval.py`.
 - **Main Application**: The main script `src/main.py` initializes the RAG system and handles user interactions.
