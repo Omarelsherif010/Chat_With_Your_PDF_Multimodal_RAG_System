@@ -1,0 +1,90 @@
+{
+  "metadata": {
+    "timestamp": "20250209_212032",
+    "num_questions": 5,
+    "evaluation_date": "2025-02-09T21:20:32.334635"
+  },
+  "average_metrics": {
+    "relevance": 0.31999999999999995,
+    "completeness": 0.05,
+    "accuracy": 0.7,
+    "source_usage": 0.8,
+    "image_handling": 0.0,
+    "bleu_score": 0.0,
+    "rouge_l": 0.39929224660466,
+    "context_relevance": 0.0,
+    "factual_accuracy": 0.19964612330233
+  },
+  "questions_summary": [
+    {
+      "question": "How is the scaled dot product attention calculated?",
+      "metrics": {
+        "relevance": 0.8,
+        "completeness": 0.25,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.24719101123595508,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.12359550561797754
+      }
+    },
+    {
+      "question": "What is the BLEU score of the model in English to German translation EN-DE?",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.40625,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.203125
+      }
+    },
+    {
+      "question": "How long were the base and big models trained?",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.65,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.325
+      }
+    },
+    {
+      "question": "Which optimizer was used when training the models?",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.419047619047619,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.2095238095238095
+      }
+    },
+    {
+      "question": "Show me a picture that shows the difference between Scaled Dot-Product Attention and Multi-Head Attention.",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.3,
+        "source_usage": 0.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.273972602739726,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.136986301369863
+      }
+    }
+  ]
+}
