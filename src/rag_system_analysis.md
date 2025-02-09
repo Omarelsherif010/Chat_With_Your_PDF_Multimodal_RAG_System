@@ -2,7 +2,7 @@
 
 ## Current System Overview
 
-Based on analysis of our current implementation in `src/cached_retriever.py` and `src/evaluate_rag.py`, our RAG system provides:
+Based on analysis of our current implementation in `src/llama_parse_retriever.py` and `src/evaluate_rag.py`, our RAG system provides:
 - Multimodal retrieval (text, tables, images)
 - CLIP-based image embeddings
 - Text-based similarity search
