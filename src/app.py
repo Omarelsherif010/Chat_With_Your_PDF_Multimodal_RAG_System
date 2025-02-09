@@ -8,6 +8,9 @@ import sys
 # Add src directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import CachedRetriever instead of MultimodalRetriever
+from cached_retriever import CachedRetriever
+
 # Load environment variables
 load_dotenv()
 
@@ -43,9 +46,6 @@ def main():
         layout="wide"
     )
     
-    # Import MultimodalRetriever here to avoid torch class issues
-    from retrieval_llama_parse import MultimodalRetriever
-    
     st.title("Research Paper Q&A System")
     st.markdown("### Ask questions about the Attention Is All You Need paper")
     
@@ -56,21 +56,21 @@ def main():
     with st.sidebar:
         st.header("API Configuration")
         openai_key = st.text_input("OpenAI API Key", type="password")
+        pinecone_key = st.text_input("Pinecone API Key", type="password")
         
-        # Update API key if provided
+        # Update API keys if provided
         if openai_key:
             os.environ["OPENAI_API_KEY"] = openai_key
+        if pinecone_key:
+            os.environ["PINECONE_API_KEY"] = pinecone_key
             
         # Initialize button
         if not st.session_state.initialized:
             if st.button("Initialize System"):
-                with st.spinner("Initializing retrieval system... This may take a few minutes."):
+                with st.spinner("Initializing retrieval system..."):
                     try:
-                        st.session_state.retriever = MultimodalRetriever()
-                        # Load and store content
-                        json_path = "llama_parse_output/llama_parse_output_4.json"
-                        summaries_path = "llama_parse_summary/summaries_5.json"
-                        st.session_state.retriever.load_and_store_content(json_path, summaries_path)
+                        # Use CachedRetriever instead of MultimodalRetriever
+                        st.session_state.retriever = CachedRetriever()
                         st.session_state.initialized = True
                         st.success("System initialized successfully!")
                     except Exception as e:
@@ -125,23 +125,22 @@ def main():
                             # Image sources
                             if retrieved_content["images"]:
                                 with st.expander("🖼️ Image Sources", expanded=True):
-                                    for doc in retrieved_content["images"]:
-                                        st.markdown(f"**Image {doc.metadata.get('image_num', 'N/A')} "
-                                                  f"(Page {doc.metadata.get('page_num', 'N/A')}):**")
+                                    for img in retrieved_content["images"]:
+                                        metadata = img["metadata"]
+                                        st.markdown(f"**Image (Page {metadata.get('page_num', 'N/A')}):**")
                                         
                                         # Display image if path exists
-                                        image_path = doc.metadata.get('image_path')
+                                        image_path = metadata.get('image_path')
                                         if image_path:
                                             path = Path(image_path)
                                             if path.exists():
-                                                st.info(f"Loading image from: {path}")
                                                 display_image(path)
                                             else:
                                                 st.warning(f"Image file not found at: {path}")
                                         else:
                                             st.warning("No image path provided in metadata")
                                             
-                                        st.markdown(f"*Summary: {doc.metadata.get('summary', 'No summary available')}*")
+                                        st.markdown(f"*Summary: {metadata.get('summary', 'No summary available')}*")
                                         st.divider()
                             
                     except Exception as e:
