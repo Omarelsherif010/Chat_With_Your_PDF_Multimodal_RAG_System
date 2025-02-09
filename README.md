@@ -4,6 +4,10 @@
 
 This project is a multimodal RAG system that ingests data containing images, text, and tables from the well-known paper “Attention Is All You Need”. The system should be able to retrieve relevant information and reason over the multimodal data to answer user queries.
 
+## Architecture Diagram
+
+![Architecture Diagram](Architecture\diagram-export-2-9-2025-11_48_20-PM.png)
+
 ## Technical Solution Design
 
 1. Technical Solution Design (expected output: technical design document or PPT)
