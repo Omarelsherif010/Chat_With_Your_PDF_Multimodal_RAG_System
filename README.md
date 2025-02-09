@@ -6,7 +6,7 @@ This project is a multimodal RAG system that ingests data containing images, tex
 
 ## Architecture Diagram
 
-![Architecture Diagram](Architecture\diagram-export-2-9-2025-11_48_20-PM.png)
+![Architecture Diagram](Architecture/diagram-export-2-9-2025-11_48_20-PM.png)
 
 ## Technical Solution Design
 
