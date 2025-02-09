@@ -27,6 +27,10 @@ pandas = "^2.2.3"
 langchain-chroma = "^0.2.1"
 langchain-pinecone = "^0.2.2"
 pinecone = "^5.4.2"
+tabula-py = "^2.10.0"
+jpype1 = "^1.5.2"
+llama-parse = "^0.6.0"
+llama-index = "^0.12.16"
 
 
 
