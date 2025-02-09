@@ -31,6 +31,10 @@ tabula-py = "^2.10.0"
 jpype1 = "^1.5.2"
 llama-parse = "^0.6.0"
 llama-index = "^0.12.16"
+transformers = "^4.48.3"
+torch = "^2.6.0"
+pydantic = "^2.10.6"
+pydantic-settings = "^2.7.1"
 
 
 
