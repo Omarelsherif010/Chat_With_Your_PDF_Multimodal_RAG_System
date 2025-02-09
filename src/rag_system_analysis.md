@@ -2,7 +2,7 @@
 
 ## Current System Overview
 
-Based on analysis of our current implementation in `src/cached_retriever.py` and `src/evaluate_rag.py`, our RAG system provides:
+Based on analysis of our current implementation in `src/llama_parse_retriever.py` and `src/evaluate_rag.py`, our RAG system provides:
 - Multimodal retrieval (text, tables, images)
 - CLIP-based image embeddings
 - Text-based similarity search
@@ -147,31 +147,6 @@ Based on analysis of our current implementation in `src/cached_retriever.py` and
 - Source attribution accuracy: >95%
 - Response consistency: >90%
 
-## Implementation Strategy
-
-### Phase 1: Foundation (Weeks 1-4)
-1. Agent Architecture Setup
-   - Agent communication protocol
-   - State management system
-   - Monitoring framework
-
-2. Evaluation Framework Enhancement
-   - Expanded metrics suite
-   - Real-time performance monitoring
-   - User feedback integration
-
-### Phase 2: Core Agents (Weeks 5-12)
-1. Query Intelligence Agent
-2. Context Management Agent
-3. Multimodal Fusion Agent
-4. Response Verification Agent
-
-### Phase 3: Integration and Optimization (Weeks 13-16)
-1. Agent Orchestration
-2. Performance Tuning
-3. User Interface Enhancement
-4. System Validation
-
 ## Success Metrics
 
 ### Retrieval Performance
@@ -193,45 +168,3 @@ Based on analysis of our current implementation in `src/cached_retriever.py` and
 
 Implementing Agentic RAG will transform our current static system into a dynamic, intelligent solution that better understands and responds to user needs. The proposed agents will work together to provide more accurate, comprehensive, and contextually appropriate responses.
 
-## Technical Requirements
-
-### Infrastructure
-- Vector Database: Pinecone serverless
-- Embedding Models: OpenAI + CLIP
-- LLM: GPT-4
-- Storage: Local file system for images
-
-### Performance Requirements
-- Latency: <3s for retrieval
-- Throughput: >10 queries/second
-- Storage: Scalable to 100K+ documents
-
-## Implementation Risks and Mitigations
-
-1. **Performance Risks**
-   - Large response times
-   - API rate limits
-   - Memory usage
-
-2. **Integration Risks**
-   - Agent coordination complexity
-   - State management challenges
-   - Error propagation
-
-3. **Mitigations**
-   - Caching strategy
-   - Fallback mechanisms
-   - Monitoring system
-
-## Evaluation Framework
-
-### Metrics
-- RAGAS metrics
-- Custom metrics from evaluate_rag.py
-- User feedback metrics
-
-### Testing Strategy
-- Unit tests for agents
-- Integration tests
-- Performance benchmarks
-- User acceptance testing
