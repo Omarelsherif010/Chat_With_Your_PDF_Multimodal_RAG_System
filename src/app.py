@@ -1,32 +1,50 @@
 import streamlit as st
 import os
-from main import MultimodalRAG
 from dotenv import load_dotenv
-import base64
+from PIL import Image
+from pathlib import Path
+import sys
+
+# Add src directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load environment variables
 load_dotenv()
 
 def initialize_session_state():
     """Initialize session state variables"""
-    if 'rag' not in st.session_state:
-        st.session_state.rag = None
+    if 'retriever' not in st.session_state:
+        st.session_state.retriever = None
     if 'initialized' not in st.session_state:
         st.session_state.initialized = False
 
-def display_base64_image(base64_str):
-    """Display base64 image in Streamlit"""
-    if base64_str.startswith('data:image'):
-        # Remove the data URI prefix
-        base64_str = base64_str.split(',')[1]
-    st.image(base64.b64decode(base64_str))
+def display_image(image_path):
+    """Display image in Streamlit"""
+    try:
+        path = Path(image_path)
+        if not path.exists():
+            st.error(f"Image file not found: {image_path}")
+            return
+            
+        try:
+            image = Image.open(path)
+            st.image(image, use_column_width=True, caption=f"Image from {path.name}")
+        except Exception as e:
+            st.error(f"Error opening image: {e}")
+            
+    except Exception as e:
+        st.error(f"Error handling image path: {e}")
 
 def main():
+    # Disable Streamlit's file watcher for torch modules
     st.set_page_config(
         page_title="Research Paper Q&A System",
         page_icon="📚",
         layout="wide"
     )
+    
+    # Import MultimodalRetriever here to avoid torch class issues
+    from retrieval_llama_parse import MultimodalRetriever
     
     st.title("Research Paper Q&A System")
     st.markdown("### Ask questions about the Attention Is All You Need paper")
@@ -37,22 +55,22 @@ def main():
     # API Key input section
     with st.sidebar:
         st.header("API Configuration")
-        openai_key = st.text_input("OpenAI API Key (optional)", type="password")
-        groq_key = st.text_input("Groq API Key (optional)", type="password")
+        openai_key = st.text_input("OpenAI API Key", type="password")
         
-        # Update API keys if provided
+        # Update API key if provided
         if openai_key:
             os.environ["OPENAI_API_KEY"] = openai_key
-        if groq_key:
-            os.environ["GROQ_API_KEY"] = groq_key
             
         # Initialize button
         if not st.session_state.initialized:
             if st.button("Initialize System"):
-                with st.spinner("Initializing RAG system... This may take a few minutes."):
+                with st.spinner("Initializing retrieval system... This may take a few minutes."):
                     try:
-                        st.session_state.rag = MultimodalRAG()
-                        st.session_state.rag.initialize()
+                        st.session_state.retriever = MultimodalRetriever()
+                        # Load and store content
+                        json_path = "llama_parse_output/llama_parse_output_4.json"
+                        summaries_path = "llama_parse_summary/summaries_5.json"
+                        st.session_state.retriever.load_and_store_content(json_path, summaries_path)
                         st.session_state.initialized = True
                         st.success("System initialized successfully!")
                     except Exception as e:
@@ -70,49 +88,61 @@ def main():
         
         if st.button("Get Answer"):
             if query:
-                with st.spinner("Generating response..."):
+                with st.spinner("Retrieving and generating response..."):
                     try:
-                        result = st.session_state.rag.query(query, return_sources=show_sources)
+                        # Get retrieved content
+                        retrieved_content = st.session_state.retriever.retrieve(query)
+                        
+                        # Generate response
+                        response = st.session_state.retriever.generate_response(query, retrieved_content)
+                        
+                        # Display response
+                        st.markdown("### Response")
+                        st.markdown(response)
                         
                         if show_sources:
-                            # Display response in a container
-                            with st.container():
-                                st.markdown("### Response")
-                                st.markdown(result["response"])
-                            
                             # Display sources in expandable sections
                             st.markdown("### Sources Used")
                             
                             # Text sources
-                            if result["sources"]["texts"]:
+                            if retrieved_content["texts"]:
                                 with st.expander("📝 Text Sources", expanded=False):
-                                    for i, text in enumerate(result["sources"]["texts"]):
-                                        st.markdown(f"**Text {i+1} (Page {text['metadata']['page']}):**")
-                                        st.markdown(text['content'])
-                                        st.markdown(f"*Summary: {text['metadata']['summary']}*")
+                                    for doc in retrieved_content["texts"]:
+                                        st.markdown(f"**Page {doc.metadata['page_num']}:**")
+                                        st.markdown(doc.page_content)
+                                        st.markdown(f"*Summary: {doc.metadata.get('summary', 'No summary available')}*")
                                         st.divider()
                             
                             # Table sources
-                            if result["sources"]["tables"]:
+                            if retrieved_content["tables"]:
                                 with st.expander("📊 Table Sources", expanded=False):
-                                    for i, table in enumerate(result["sources"]["tables"]):
-                                        st.markdown(f"**Table {i+1} (Page {table['metadata']['page']}):**")
-                                        st.markdown(table['content'])
-                                        st.markdown(f"*Summary: {table['metadata']['summary']}*")
+                                    for doc in retrieved_content["tables"]:
+                                        st.markdown(f"**{doc.metadata.get('title', 'Table')}**")
+                                        st.markdown(f"Page {doc.metadata['page_num']}:")
+                                        st.markdown(doc.page_content)
                                         st.divider()
                             
                             # Image sources
-                            if result["sources"]["images"]:
+                            if retrieved_content["images"]:
                                 with st.expander("🖼️ Image Sources", expanded=True):
-                                    for i, img in enumerate(result["sources"]["images"]):
-                                        st.markdown(f"**Image {i+1} (Page {img['metadata']['page']}):**")
-                                        display_base64_image(img['content'])
-                                        st.markdown(f"**Caption:** {img['metadata']['caption']}")
-                                        st.markdown(f"*Summary: {img['metadata']['summary']}*")
+                                    for doc in retrieved_content["images"]:
+                                        st.markdown(f"**Image {doc.metadata.get('image_num', 'N/A')} "
+                                                  f"(Page {doc.metadata.get('page_num', 'N/A')}):**")
+                                        
+                                        # Display image if path exists
+                                        image_path = doc.metadata.get('image_path')
+                                        if image_path:
+                                            path = Path(image_path)
+                                            if path.exists():
+                                                st.info(f"Loading image from: {path}")
+                                                display_image(path)
+                                            else:
+                                                st.warning(f"Image file not found at: {path}")
+                                        else:
+                                            st.warning("No image path provided in metadata")
+                                            
+                                        st.markdown(f"*Summary: {doc.metadata.get('summary', 'No summary available')}*")
                                         st.divider()
-                        else:
-                            st.markdown("### Response")
-                            st.markdown(result)
                             
                     except Exception as e:
                         st.error(f"Error generating response: {str(e)}")
