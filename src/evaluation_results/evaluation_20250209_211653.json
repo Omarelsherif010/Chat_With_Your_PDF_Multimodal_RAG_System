@@ -1,0 +1,91 @@
+{
+  "timestamp": "20250209_211653",
+  "results": [
+    {
+      "question": "How is the scaled dot product attention calculated?",
+      "response": "The Scaled Dot-Product Attention is calculated by first computing the dot products of the input query with all keys. The dimension of the queries and keys is denoted as dk. The values, on the other hand, have a dimension of dv. After the dot products are computed, each is divided by the square root of dk (\u221adk). Then, a softmax function is applied to the resultant values to determine the weights on the values. These weights are computed by a compatibility function of the query with the corresponding key. This process is similar to dot-product attention, except for the scaling factor of \u221a1/dk.",
+      "metrics": {
+        "relevance": 0.8,
+        "completeness": 0.25,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.2948717948717949,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.14743589743589744
+      }
+    },
+    {
+      "question": "What is the BLEU score of the model in English to German translation EN-DE?",
+      "response": "The BLEU score of the Transformer model for English to German translation (EN-DE) is 28.4, as mentioned on Page 1.0 of the retrieved content and in the table on Page 8.0. This score is for the Transformer (big) model. The Transformer (base model) achieved a BLEU score of 27.3 for the same task.",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.35789473684210527,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.17894736842105263
+      }
+    },
+    {
+      "question": "How long were the base and big models trained?",
+      "response": "The base models were trained for a total of 100,000 steps which took about 12 hours. On the other hand, the big models were trained for 300,000 steps which took approximately 3.5 days. Both types of models were trained on one machine with 8 NVIDIA P100 GPUs.",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.6265060240963856,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.3132530120481928
+      }
+    },
+    {
+      "question": "Which optimizer was used when training the models?",
+      "response": "The optimizer used when training the models in the Transformer architecture was the Adam optimizer. The hyperparameters for the Adam optimizer were set as \u03b21 = 0.9, \u03b22 = 0.98, and \u03f5 = 10\u22129. The learning rate was varied over the course of training using a specific formula. It was increased linearly for the first warmup_steps training steps and decreased thereafter proportionally to the inverse square root of the step number. Warmup_steps was set at 4000.",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.8,
+        "source_usage": 1.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.38834951456310673,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.19417475728155337
+      }
+    },
+    {
+      "question": "Show me a picture that shows the difference between Scaled Dot-Product Attention and Multi-Head Attention.",
+      "response": "I'm sorry, but I cannot provide the requested picture as no relevant images were found in the retrieved content.",
+      "metrics": {
+        "relevance": 0.2,
+        "completeness": 0.0,
+        "accuracy": 0.3,
+        "source_usage": 0.0,
+        "image_handling": 0.0,
+        "bleu_score": 0.0,
+        "rouge_l_score": 0.09523809523809525,
+        "context_relevance": 0.0,
+        "factual_accuracy": 0.04761904761904762
+      }
+    }
+  ],
+  "average_metrics": {
+    "relevance": 0.31999999999999995,
+    "completeness": 0.05,
+    "accuracy": 0.7,
+    "source_usage": 0.8,
+    "image_handling": 0.0,
+    "bleu_score": 0.0,
+    "rouge_l": 0.35257203312229757,
+    "context_relevance": 0.0,
+    "factual_accuracy": 0.17628601656114878
+  }
+}
